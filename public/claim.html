@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>WAN · Claim</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <section class="card" style="max-width:480px;margin:80px auto">
+      <h1>Claim credits</h1>
+      <p class="muted">Confirm only after finishing all short links. One-time use.</p>
+      <div class="row">
+        <button class="btn btn-primary" id="confirm" type="button">Confirm complete</button>
+      </div>
+      <div id="result" class="result" hidden style="margin-top:16px"></div>
+    </section>
+  </div>
+  <script>
+    const token = location.pathname.split("/").filter(Boolean).pop() || new URLSearchParams(location.search).get("t") || "";
+    const btn = document.getElementById("confirm");
+    const box = document.getElementById("result");
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "Checking…";
+      try {
+        const res = await fetch("/api/claim-confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token })
+        });
+        const data = await res.json();
+        box.hidden = false;
+        if (!res.ok) {
+          box.className = "result err";
+          box.textContent = data.error || "failed";
+          btn.disabled = false;
+          btn.textContent = "Confirm complete";
+          return;
+        }
+        box.className = "result ok";
+        box.textContent = "Confirmed · " + (data.credits || "") + " credits pending";
+        btn.textContent = "Done";
+      } catch (e) {
+        box.hidden = false;
+        box.className = "result err";
+        box.textContent = "network_error";
+        btn.disabled = false;
+        btn.textContent = "Confirm complete";
+      }
+    };
+  </script>
+</body>
+</html>
