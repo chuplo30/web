@@ -1,14 +1,42 @@
-# WAN Web
+# 8xms Obfuscate + Custom Register VM
 
-## Fix "not found" after upload on Vercel
+## Pipeline
 
-Serverless does not keep /tmp files. For stable pastes:
+```
+Luau
+  → compileToVM (~130 opcodes, random physical map per build)
+  → emit Lua interpreter + bytecode (opcode table XOR-masked at runtime)
+  → transformComplex (nested state machine shell)
+  → multi-fragment × triple multiLayerEncode (XOR/hex/Base94)
+  → junk 140–180KB + Anti-Tamper
+  → loadstring
+```
 
-1. Vercel Dashboard → Project → Storage → Create **Blob**
-2. Connect to project → copy `BLOB_READ_WRITE_TOKEN` into Project Env
-3. Redeploy
+## VM modes
 
-Without Blob, paste may work briefly on same instance then 404.
+- **vm**: simple straight-line scripts compiled to real bytecode
+- **execstr**: full script as VM constant + `EXECSTR` handler (any valid Luau still runs)
+
+## Files
+
+| Path | Role |
+|------|------|
+| `js/vm-isa.js` | 130 opcode ISA + packInst |
+| `js/vm-compiler.js` | source → bytecode |
+| `js/vm-runtime.js` | bytecode → Lua interpreter source |
+| `js/transform.js` | state-machine shell |
+| `js/obfuscate.js` | full pipeline |
+| `netlify/functions/obfuscate.mjs` | API |
 
 ## Deploy
-Push to GitHub → Vercel import. No build command.
+
+Netlify publish `.` — see `docs.html` for API.
+
+
+## VM module
+
+- `vm-isa.js` — 130 logical opcodes + random physical map
+- `vm-compiler.js` — subset bytecode / EXECSTR fallback
+- `vm-runtime.js` — handler-table interpreter emitter
+
+Obfuscate pipeline always runs VM emission before State Machine + pack.
