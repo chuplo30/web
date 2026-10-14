@@ -15,12 +15,11 @@ const SAFE_CHARS = (() => {
 })();
 
 export function randJunkStrSafe(len) {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    let s = '';
-    for (let i = 0; i < len; i++) s += SAFE_CHARS[Math.floor(Math.random() * SAFE_CHARS.length)];
-    if (!/\]={1,}\]/.test(s)) return s;
-  }
-  return 'x'.repeat(len);
+  // Never emit ] or = — avoids breaking Lua longstrings [==[ ]==]
+  const CH = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+{}|:;<>?,./~';
+  let s = '';
+  for (let i = 0; i < len; i++) s += CH[Math.floor(Math.random() * CH.length)];
+  return s;
 }
 
 export function multiLayerEncode(source, seed1, seed2) {
