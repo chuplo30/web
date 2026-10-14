@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { compileLuauToVM } from '../js/vm-v3.js';
+import { emitLuauVMRuntime } from '../js/runtime/luau-vm-runtime.js';
+process.env.LUAU_COMPILE_BIN=new URL('./fake-luau-compile.mjs',import.meta.url).pathname;
+const p=compileLuauToVM('print("irrelevant")',{seed:0x31415926,optimizationLevel:1,debugLevel:0});
+assert.equal(p.functions.length,1);
+assert.equal(p.luauBytecodeVersion,9);
+assert.equal(p.functions[0].constants[0].type,'xpack94');
+assert.ok(p.isa.order.length>100);
+const code=emitLuauVMRuntime(p,{entry:true,returnResults:true});
+assert.ok(code.length>10000);
+assert.ok(!code.includes('LU_'));
+assert.ok(!code.includes('string.char(104,101,108,108,111)'));
+assert.ok(code.includes('xpack'));
+assert.ok(code.includes('pc='));
+console.log('vm3 fake end-to-end: PASS');

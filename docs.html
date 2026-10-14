@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>8xms Docs</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="card docs">
+      <div class="header">
+        <div class="logo">8xms Docs</div>
+        <span class="nav"><a href="index.html">← Tool</a></span>
+      </div>
+
+      <h2>Pipeline</h2>
+      <pre>Luau source
+  → Custom Register-Based VM (130 opcodes, random map / build)
+  → bytecode + interpreter (Lua)
+  → Complex State Machine IR
+  → Triple multi-frag encode (XOR→hex→Base94)
+  → Junk + Anti-Tamper + loadstring</pre>
+      <h2>Full Luau path</h2>
+      <ul>
+        <li><b>Lexer + Parser</b> → AST</li>
+        <li><b>Scramble</b> locals/functions → <code>__n1</code>…</li>
+        <li><b>AST → bytecode</b> khi đủ subset; không thì <b>EXECSTR source đã scramble</b></li>
+        <li>VM 130 op + SM + triple pack</li>
+      </ul>
+      <h2>Custom VM</h2>
+      <ul>
+        <li><b>130 opcode slots</b> — map vật lý random mỗi lần Obfuscate</li>
+        <li>Bảng handler XOR-mask — dump thấy số junk</li>
+        <li>Subset compile (assign/call/binop) → bytecode thật</li>
+        <li>Script phức tạp → EXECSTR qua VM (source trong constant pool)</li>
+      </ul>
+      <h2>Pipeline (pack)</h2>
+      <pre>Luau source
+  → Custom Register VM (~130 op) + State Machine IR
+  → Multi-fragment triple encode (XOR→hex→XOR→Base94 × 3 × 5–7 pieces)
+  → Junk 120–150KB + Anti-Tamper
+  → loadstring loader</pre>
+
+      <h2>State Machine</h2>
+      <ul>
+        <li><b>Full Luau:</b> không tách statement — toàn bộ script trong 1 block thật → mọi syntax hợp lệ đều chạy.</li>
+        <li><b>Entry chain:</b> 4–8 hops junk trước body.</li>
+        <li><b>Triple opaque:</b> 3 họ predicate lồng bọc body.</li>
+        <li><b>Dead / mid states:</b> 12–21+ state nhiễu + phase counter.</li>
+        <li><b>Virtual table __VT:</b> hằng số giả dispatch.</li>
+      </ul>
+      <p>Dump vẫn thấy logic (chưa phải VM/AST rename). Muốn source sạch phải phân tích / viết lại một phần.</p>
+
+      <h2 id="api">API (Netlify Function)</h2>
+      <p>Sau khi deploy, endpoint:</p>
+      <pre>POST /api/obfuscate
+Content-Type: application/json
+
+{ "code": "print(\\"ok\\")" }</pre>
+      <p>Response:</p>
+      <pre>{
+  "ok": true,
+  "code": "return(function()...end)()",
+  "meta": { "inputBytes": 12, "outputBytes": 140000, "fragments": 5 }
+}</pre>
+      <pre>curl -s -X POST https://YOUR_SITE.netlify.app/api/obfuscate \\
+  -H "Content-Type: application/json" \\
+  -d '{"code":"print(\\"2\\")"}'</pre>
+
+      <h2>Deploy Netlify</h2>
+      <ol>
+        <li>Kéo thư mục <code>8xms-web</code> lên Netlify (hoặc connect Git).</li>
+        <li>Build: để trống / Publish: <code>.</code></li>
+        <li>Functions tự nhận <code>netlify/functions</code>.</li>
+      </ol>
+
+      <h2>Giới hạn</h2>
+      <ul>
+        <li>Không phải Luraph VM — reverse vẫn được nếu chịu khó.</li>
+        <li>Long string <code>[[...]]</code> không đưa vào string pool (tránh vỡ).</li>
+        <li>API function chạy cùng logic JS (Node 18+).</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
