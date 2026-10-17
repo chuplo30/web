@@ -2,68 +2,53 @@ const $ = (id) => document.getElementById(id);
 let lastBlob = null;
 let lastName = 'obfuscated.lua';
 
+function applyResult(code, meta, inputLen) {
+  $('outputLua').value = code;
+  lastBlob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+  const base = ($('fname').value || 'obfuscated').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  lastName = base + '.lua';
+  $('btnDl').disabled = !code;
+  const m = meta || {};
+  $('status').textContent =
+    `OK ${code.length} bytes · pack=${m.pack || 'xor20-hex-xor20-base94'} · mode=${m.vmMode || '?'} · loadstring=${m.loadstring === false ? 'no' : m.loadstring}`;
+}
+
 $('fileInput').addEventListener('change', (e) => {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
-  const r = new FileReader();
-  r.onload = () => {
-    $('inputLua').value = r.result;
-    $('status').textContent = 'Uploaded: ' + f.name;
+  const reader = new FileReader();
+  reader.onload = () => {
+    $('inputLua').value = String(reader.result || '');
+    $('status').textContent = 'Uploaded ' + f.name;
   };
-  r.readAsText(f);
+  reader.readAsText(f);
 });
 
-async function callApi(code) {
-  const res = await fetch('/api/obfuscate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
-  const text = await res.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('API not JSON (' + res.status + '): ' + text.slice(0, 180));
-  }
-  if (!res.ok || !data.ok) {
-    throw new Error((data && data.error) || ('HTTP ' + res.status));
-  }
-  return data;
-}
-
-function applyResult(code, meta, inputLen) {
-  $('outputLua').value = code;
-  const rn = 1000 + Math.floor(Math.random() * 9000);
-  const base = ($('fname').value || 'obfuscated').replace(/[^a-zA-Z0-9_\-]/g, '_');
-  lastName = `${base}_${rn}.lua`;
-  lastBlob = new Blob([code], { type: 'text/plain;charset=utf-8' });
-  $('btnDl').disabled = false;
-  const kb = meta.outputBytes
-    ? (meta.outputBytes / 1024).toFixed(1)
-    : (code.length / 1024).toFixed(1);
-  $('status').textContent =
-    `OK ${meta.inputBytes || inputLen}B → ${kb}KB · mode=${meta.vmMode || '?'} · ${meta.pipeline || ''} → ${lastName}`;
-}
-
 $('btnObf').addEventListener('click', async () => {
-  const input = $('inputLua').value;
-  if (!String(input).trim()) {
-    $('status').textContent = 'Error: Input is empty!';
+  const input = $('inputLua').value || '';
+  if (!input.trim()) {
+    $('status').textContent = 'Error: empty input';
     return;
   }
-  $('status').textContent = 'Obfuscating (server API)...';
   $('btnObf').disabled = true;
+  $('status').textContent = 'Obfuscating (full pack + VM)...';
   try {
-    // Always prefer server on Pella/Express — Clyde RegVM Max stable on Node
-    const data = await callApi(input);
-    applyResult(data.code || '', data.meta || {}, input.length);
+    // Prefer server API so luau-compile + full pack always available
+    const res = await fetch('/api/obfuscate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: input }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    applyResult(data.code, data.meta, input.length);
   } catch (err) {
-    console.warn('API failed, try client', err);
+    // Client fallback — still full pack path inside obfuscate.js
     try {
-      const mod = await import('./obfuscate.js');
-      const { code, meta } = mod.obfuscate(input);
+      const mod = await import('./js/obfuscate.js');
+      const { code, meta } = mod.obfuscate(input, {});
       applyResult(code, meta || {}, input.length);
+      $('status').textContent += ' (client)';
     } catch (err2) {
       console.error(err2);
       $('status').textContent =

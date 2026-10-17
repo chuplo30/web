@@ -1,6 +1,7 @@
 /**
- * 8xms Obfuscate — Express (Pella / any Node host)
- * Static UI + POST /api/obfuscate (Clyde RegVM Max on server)
+ * WAN Obfuscate — Express (Pella / any Node host)
+ * Static UI + POST /api/obfuscate
+ * Default: full pack xor20+hex+xor20+base94 + VM + setmetatable shell (no loadstring)
  */
 import express from 'express';
 import cors from 'cors';
@@ -16,25 +17,39 @@ app.use(cors());
 app.use(express.json({ limit: '8mb' }));
 app.use(express.text({ type: ['text/plain', 'application/lua'], limit: '8mb' }));
 
-// API first
+/** Always-on pack / VM options for web + API */
+function buildOpts(body) {
+  const o = (body && typeof body === 'object') ? { ...body } : {};
+  // Force full WAN output (pack + setmetatable shell). Never disable pack on web.
+  delete o.noPack;
+  delete o.useCatph; // Catph emit breaks loadstring / wrong shell
+  o.noCatph = true;
+  if (o.noAT === undefined && o.at === false) o.noAT = true;
+  if (o.debug === undefined) o.debug = false;
+  return o;
+}
+
 app.post('/api/obfuscate', (req, res) => {
   try {
     let code = '';
+    let bodyOpts = {};
     if (typeof req.body === 'string') code = req.body;
     else if (req.body && typeof req.body === 'object') {
       code = req.body.code || req.body.source || '';
+      bodyOpts = req.body;
     }
     if (!String(code).trim()) {
       return res.status(400).json({ ok: false, error: 'empty code' });
     }
-    const result = obfuscate(code);
+    const opts = buildOpts(bodyOpts);
+    const result = obfuscate(code, opts);
     return res.json({
       ok: true,
       code: result.code,
       meta: result.meta,
     });
   } catch (e) {
-    console.error('[8xms] obfuscate error:', e);
+    console.error('[WAN] obfuscate error:', e);
     return res.status(500).json({
       ok: false,
       error: String(e && e.message ? e.message : e),
@@ -43,10 +58,9 @@ app.post('/api/obfuscate', (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: '8xms', runtime: 'express' });
+  res.json({ ok: true, service: 'wan-obfuscate', runtime: 'express', pack: 'xor20-hex-xor20-base94' });
 });
 
-// Static site (index, css, js, clyde modules for optional client)
 app.use(express.static(__dirname, {
   extensions: ['html'],
   setHeaders(res, filePath) {
@@ -61,6 +75,6 @@ app.get('*', (_req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[8xms] Express listening on :${PORT}`);
-  console.log(`[8xms] POST /api/obfuscate  GET /api/health`);
+  console.log(`[WAN] Express listening on :${PORT}`);
+  console.log(`[WAN] POST /api/obfuscate  GET /api/health  pack=FULL default`);
 });

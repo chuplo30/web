@@ -22,7 +22,7 @@ import { LOGICAL } from './vm-isa.js';
 function bodyFor(name) {
   const N = {
     MOVE: 'R[A]=R[B]',
-    LOADK: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local o={} for i=1,#v do o[i]=string.char(bxor(v:byte(i),((_SK+(i)*31)%256))) end R[A]=table.concat(o) else R[A]=v end end',
+    LOADK: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end R[A]=s else R[A]=v end end',
     LOADN: 'do local ki=B+C*256;R[A]=_K[ki+1] end',
     LOADB: 'R[A]=(B~=0)',
     LOADNIL: 'R[A]=nil',
@@ -30,32 +30,32 @@ function bodyFor(name) {
     GETGLOBAL: 'do local n=R[B] if type(n)~="string" then n=tostring(n) end R[A]=_ENV[n] end',
     SETGLOBAL: 'do local n=R[A] if type(n)~="string" then n=tostring(n) end _ENV[n]=R[B] end',
     // GETTABLE/SETTABLE: type-guard against indexing non-tables (Instance indexing is allowed by Roblox)
-    GETTABLE: 'do local _b,_k=R[B],R[C] if _b~=nil and _k~=nil then R[A]=_b[_k] else R[A]=nil end end',
-    SETTABLE: 'do local _b,_k=R[A],R[B] if _b~=nil and _k~=nil then _b[_k]=R[C] end end',
-    GETFIELD: 'do local _b,_k=R[B],R[C] if _b~=nil and _k~=nil then R[A]=_b[_k] else R[A]=nil end end',
-    SETFIELD: 'do local _b,_k=R[A],R[B] if _b~=nil and _k~=nil then _b[_k]=R[C] end end',
-    ADD: 'do local b,c=R[B],R[C] if type(b)=="number" and type(c)=="number" then R[A]=b+c else local ok,r=pcall(function() return b+c end) R[A]=ok and r or ((tonumber(b)or 0)+(tonumber(c)or 0)) end end',
-    SUB: 'do local b,c=R[B],R[C] if type(b)=="number" and type(c)=="number" then R[A]=b-c else local ok,r=pcall(function() return b-c end) R[A]=ok and r or ((tonumber(b)or 0)-(tonumber(c)or 0)) end end',
-    MUL: 'do local b,c=R[B],R[C] if type(b)=="number" and type(c)=="number" then R[A]=b*c else local ok,r=pcall(function() return b*c end) R[A]=ok and r or ((tonumber(b)or 0)*(tonumber(c)or 0)) end end',
-    DIV: 'do local b,c=R[B],R[C] if type(b)=="number" and type(c)=="number" then R[A]=b/(c~=0 and c or 1) else local ok,r=pcall(function() return b/c end) R[A]=ok and r or ((tonumber(b)or 0)/((tonumber(c)or 1))) end end',
+    GETTABLE: 'do local _b,_k=R[B],R[C] local _tb=type(_b) if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETTABLE: 'do local _t,_k=R[A],R[B] local _tb=type(_t) if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
+    GETFIELD: 'do local _b,_k=R[B],R[C] local _tb=type(_b) if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETFIELD: 'do local _t,_k=R[A],R[B] local _tb=type(_t) if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
+    ADD: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)+(c or 0) end',
+    SUB: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)-(c or 0) end',
+    MUL: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)*(c or 0) end',
+    DIV: 'do local b=tonumber(R[B]) or 0; local c=tonumber(R[C]) or 0; R[A]=b/((c~=0 and c) or 1) end',
     MOD: 'do local b,c=tonumber(R[B])or 0,tonumber(R[C])or 1; R[A]=b%(c~=0 and c or 1) end',
     POW: 'do local b,c=tonumber(R[B])or 0,tonumber(R[C])or 1; R[A]=b^c end',
     IDIV: 'do local b,c=tonumber(R[B])or 0,tonumber(R[C])or 1; R[A]=math.floor(b/(c~=0 and c or 1)) end',
-    UNM: 'do local b=R[B] if type(b)=="number" then R[A]=-b else local ok,r=pcall(function() return -b end) R[A]=ok and r or -(tonumber(b)or 0) end end',
+    UNM: 'do local b=tonumber(R[B]) or 0; R[A]=-b end',
     NOT: 'R[A]=not R[B]',
     // LEN: only call # on strings/tables. Instance has no # operator.
     LEN: 'do local _b=R[B] if type(_b)=="string" or type(_b)=="table" then R[A]=#_b else R[A]=0 end end',
     // CONCAT: tostring both operands to avoid "invalid argument" on Instance
-    CONCAT: 'R[A]=tostring(R[B])..tostring(R[C])',
-    JMP: 'do local off=B+C*256;if off>32767 then off=off-65536 end;PC=PC+off end',
+    CONCAT: 'do local i=tonumber(B) or 0;local j=tonumber(C) or i;local s="" for k=i,j do s=s..tostring(R[k]~=nil and R[k] or "") end R[A]=s end' ,
+    JMP: 'do local off=tonumber(B) or 0; off=off+(tonumber(C) or 0)*256;if off>32767 then off=off-65536 end;PC=(tonumber(PC) or 1)+off end',
     EQ: 'R[A]=(R[B]==R[C])',
     // LT/LE: only compare same-type number/string; mismatch → false
     LT: 'do local _b,_c=R[B],R[C] if type(_b)==type(_c) and (type(_b)=="number" or type(_b)=="string") then R[A]=(_b<_c) else R[A]=false end end',
     LE: 'do local _b,_c=R[B],R[C] if type(_b)==type(_c) and (type(_b)=="number" or type(_b)=="string") then R[A]=(_b<=_c) else R[A]=false end end',
-    TEST: 'do local inv=C%2;local off=B+math.floor(C/2)*256;if off>16383 then off=off-32768 end;if inv==0 then if not R[A] then PC=PC+off end else if R[A] then PC=PC+off end end end',
-    TESTSET: 'do local off=B;if off>127 then off=off-256 end;if (C==0 and not R[B]) or (C==1 and R[B]) then R[A]=R[C] else PC=PC+off end end',
+    TEST: 'do local inv=(tonumber(C) or 0)%2;local off=(tonumber(B) or 0)+math.floor((tonumber(C) or 0)/2)*256;if off>16383 then off=off-32768 end;if inv==0 then if not R[A] then PC=(tonumber(PC) or 1)+off end else if R[A] then PC=(tonumber(PC) or 1)+off end end end',
+    TESTSET: 'do local off=tonumber(B) or 0;if off>127 then off=off-256 end;if ((tonumber(C) or 0)==0 and not R[B]) or ((tonumber(C) or 0)==1 and R[B]) then R[A]=R[C] else PC=(tonumber(PC) or 1)+off end end',
     // CALL A B C:  B=narg+1 (0=vararg), C=nret+1 (0=all, 1=discard, 2=1 val, ...)
-    CALL: 'do local fn=R[A] local nargs if B==0 then nargs=math.max(0,(_TOP or A)-A) else nargs=B-1 end if nargs<0 then nargs=0 end local args={} for i=1,nargs do args[i]=R[A+i] end local rr if type(fn)=="table" and fn.__vm_proto then rr={_CALL_PROTO(fn,args)} else local up=table.unpack or unpack local results={pcall(fn,up(args,1,nargs))} local ok=table.remove(results,1) if not ok then error(results[1],0) end rr=results end if C==0 then for i=1,#rr do R[A+i-1]=rr[i] end _TOP=A+math.max(0,#rr)-1 elseif C==1 then _TOP=A-1 elseif C==2 then R[A]=rr[1] elseif C>2 then for i=1,C-1 do R[A+i-1]=rr[i] end end end',
+    CALL: 'do local fn=R[A] local nargs if B==0 then nargs=math.max(0,(_TOP or A)-A) else nargs=B-1 end if nargs<0 then nargs=0 end local args={} for i=1,nargs do args[i]=R[A+i] end local rr={} if type(fn)=="table" and fn.__vm_proto then rr={_CALL_PROTO(fn,args)} elseif type(fn)=="function" then local up=table.unpack or unpack local results={pcall(fn,up(args,1,nargs))} local ok=table.remove(results,1) if not ok then error(results[1],0) end rr=results else rr={} end if C==0 then for i=1,#rr do R[A+i-1]=rr[i] end _TOP=A+math.max(0,#rr)-1 elseif C==1 then _TOP=A-1 elseif C==2 then R[A]=rr[1] elseif C>2 then for i=1,C-1 do R[A+i-1]=rr[i] end end end',
     // RETURN A B: B=nval+1 (0=vararg, 1=no values, 2=1 value, ...)
     RETURN: 'local nval=B if nval==0 then nval=(_TOP or (A-1))-A+1 end _RV={} if nval>1 then for i=1,nval do _RV[i]=R[A+i-1] end end return 2',
     NEWTABLE: 'R[A]={}',
@@ -70,16 +70,31 @@ function bodyFor(name) {
     BNOT: 'R[A]=bit32 and bit32.bnot(tonumber(R[B]) or 0) or 0',
     SHL: 'R[A]=bit32 and bit32.lshift(tonumber(R[B]) or 0,tonumber(R[C]) or 0) or 0',
     SHR: 'R[A]=bit32 and bit32.rshift(tonumber(R[B]) or 0,tonumber(R[C]) or 0) or 0',
-    SELF: 'do local _o,_m=R[B],R[C];R[A+1]=_o;if _o~=nil and _m~=nil then R[A]=_o[_m] else R[A]=nil end end',
+    SELF: 'do local _o,_m=R[B],R[C];R[A+1]=_o; local _tb=type(_o) if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    // Catph-style NAMECALL: R[A]=obj[method]; R[A+1]=obj  (method from constant or reg)
+    NAMECALL: 'do local _o=R[B]; local _m; if type(R[C])=="string" or type(R[C])=="number" then _m=R[C] else local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s2="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s2=s2.._CH(b) end _m=s2 else _m=v end end; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    NAMECALL2: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    NAMECALL3: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    // Catph GETTABLEKS: R[A] = R[B][K] where C encodes const index via B+C*256 or R[C] already loaded
+    GETTABLEKS: 'do local _b=R[B]; local ki=C; local _k=_K[ki+1]; if type(_k)=="string" then local s="" for i=1,#_k do local b=bxor(_k:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end _k=s end; local _tb=type(_b); if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETTABLEKS: 'do local _t=R[A]; local ki=B; local _k=_K[ki+1]; if type(_k)=="string" then local s="" for i=1,#_k do local b=bxor(_k:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end _k=s end; local _tb=type(_t); if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
+    GETTABLEN: 'do local _b=R[B]; local _k=C; local _tb=type(_b); if _tb=="table" or _tb=="userdata" then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETTABLEN: 'do local _t=R[A]; if type(_t)=="table" or type(_t)=="userdata" then pcall(function() _t[B]=R[C] end) end end',
+    GETTABLEKS2: 'do local _b=R[B]; local _k=R[C]; local _tb=type(_b); if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETTABLEKS2: 'do local _t=R[A]; local _tb=type(_t); if R[B]~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[R[B]]=R[C] end) end end',
+    GETTABLEN2: 'do local _b=R[B]; local _tb=type(_b); if _tb=="table" or _tb=="userdata" then local ok,v=pcall(function() return _b[C] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SETTABLEN2: 'do local _t=R[A]; if type(_t)=="table" then pcall(function() _t[B]=R[C] end) end end',
+    NEWCLOSURE: 'do local pi=B+C*256;local proto=_PROTOS[pi+1];local uv={};if proto then for i,u in ipairs(proto.upvalues or {}) do if u.isLocal then uv[i]={r=R,i=u.index} else uv[i]=_UV[u.index+1] end end;R[A]=function(...) return _RUN_PROTO(proto,{...},uv) end else R[A]=function() end end end',
+    GETVARARGS: 'local n=B if n==0 then for i=1,#_VARARGS do R[A+i-1]=_VARARGS[i] end _TOP=A+#_VARARGS-1 elseif n>=2 then R[A]=_VARARGS[1] end',
     CLOSURE: 'do local pi=B+C*256;local proto=_PROTOS[pi+1];local uv={};if proto then for i,u in ipairs(proto.upvalues or {}) do if u.isLocal then uv[i]={r=R,i=u.index} else uv[i]=_UV[u.index+1] end end;R[A]=function(...) return _RUN_PROTO(proto,{...},uv) end else R[A]=function() end end end',
-    GETUPVAL: 'do local u=_UV[B+1]; if type(u)=="table" and u.r then R[A]=u.r[u.i] else R[A]=u end end',
-    SETUPVAL: 'do local u=_UV[B+1]; if type(u)=="table" and u.r then u.r[u.i]=R[A] else _UV[B+1]=R[A] end end',
-    FORPREP: 'do R[A]=(tonumber(R[A]) or 0)-(tonumber(R[A+2]) or 1);local step=tonumber(R[A+2]) or 1;local lim=tonumber(R[A+1]) or 0;if (step>=0 and R[A]>lim) or (step<0 and R[A]<lim) then local off=B+C*256;if off>32767 then off=off-65536 end;PC=PC+off end end',
-    FORLOOP: 'do local step=tonumber(R[A+2]) or 1;R[A]=(tonumber(R[A]) or 0)+step;local lim=tonumber(R[A+1]) or 0;local cont=(step>=0 and R[A]<=lim) or (step<0 and R[A]>=lim);if cont then R[A+3]=R[A];local off=B+C*256;if off>32767 then off=off-65536 end;PC=PC+off end end',
+    GETUPVAL: 'do local u=_UV[B+1]; if type(u)=="table" and type(u.r)=="table" then local ok,v=pcall(function() return u.r[u.i] end) R[A]=ok and v or nil else R[A]=(type(u)~="table" and u or nil) end end',
+    SETUPVAL: 'do local u=_UV[B+1]; if type(u)=="table" and type(u.r)=="table" then pcall(function() u.r[u.i]=R[A] end) else _UV[B+1]=R[A] end end',
+    FORPREP: 'do R[A]=(tonumber(R[A]) or 0)-(tonumber(R[A+2]) or 1);local step=tonumber(R[A+2]) or 1;local lim=tonumber(R[A+1]) or 0;if (step>=0 and R[A]>lim) or (step<0 and R[A]<lim) then local off=(tonumber(B) or 0)+(tonumber(C) or 0)*256;if off>32767 then off=off-65536 end;PC=(tonumber(PC) or 1)+off end end',
+    FORLOOP: 'do local step=tonumber(R[A+2]) or 1;R[A]=(tonumber(R[A]) or 0)+step;local lim=tonumber(R[A+1]) or 0;local cont=(step>=0 and R[A]<=lim) or (step<0 and R[A]>=lim);if cont then R[A+3]=R[A];local off=(tonumber(B) or 0)+(tonumber(C) or 0)*256;if off>32767 then off=off-65536 end;PC=(tonumber(PC) or 1)+off end end',
     // TFORCALL: clear result slots first, then call. Coerce state/ctrl.
     TFORCALL: 'do local fn=R[A] local state=R[A+1] local ctrl=R[A+2] local nres=math.max(1,(B or 2)-1) for i=1,nres do R[A+3+i-1]=nil end local rr={} if type(fn)=="function" then local ok,a,b,c,d=pcall(fn,state,ctrl) if ok then rr[1]=a rr[2]=b rr[3]=c rr[4]=d else rr[1]=nil end elseif type(fn)=="table" and fn.__vm_proto then rr={_CALL_PROTO(fn,{state,ctrl})} end for i=1,nres do R[A+3+i-1]=rr[i] end end',
     TFORLOOP: 'do if R[A+3]~=nil then R[A+2]=R[A+3] else local off=B+C*256;if off>32767 then off=off-65536 end;PC=PC+off end end',
-    LOADSTR: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local o={} for i=1,#v do o[i]=string.char(bxor(v:byte(i),((_SK+(i)*31)%256))) end R[A]=table.concat(o) else R[A]=v end end',
+    LOADSTR: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end R[A]=s else R[A]=v end end',
     GETENV: 'R[A]=_ENV',
     RAWGET: 'do local _b=R[B] if type(_b)=="table" then R[A]=rawget(_b,R[C]) else R[A]=nil end end',
     RAWSET: 'do local _b=R[A] if type(_b)=="table" then rawset(_b,R[B],R[C]) end end',
@@ -87,7 +102,7 @@ function bodyFor(name) {
     TOSTRING: 'R[A]=tostring(R[B])',
     TYPEOF: 'R[A]=type(R[B])',
     VARARG: 'local n=B if n==0 then for i=1,#_VARARGS do R[A+i-1]=_VARARGS[i] end _TOP=A+#_VARARGS-1 elseif n>=2 then R[A]=_VARARGS[1] end',
-    TAILCALL: 'local fn=R[A] local nargs if B==0 then nargs=math.max(0,(_TOP or A)-A) else nargs=B-1 end if nargs<0 then nargs=0 end local args={} for i=1,nargs do args[i]=R[A+i] end if type(fn)=="table" and fn.__vm_proto then _RV={_CALL_PROTO(fn,args)} else local up=table.unpack or unpack _RV={fn(up(args,1,nargs))} end return 2',
+    TAILCALL: 'local fn=R[A] local nargs if B==0 then nargs=math.max(0,(_TOP or A)-A) else nargs=B-1 end if nargs<0 then nargs=0 end local args={} for i=1,nargs do args[i]=R[A+i] end if type(fn)=="table" and fn.__vm_proto then _RV={_CALL_PROTO(fn,args)} elseif type(fn)=="function" then local up=table.unpack or unpack local ok,r=pcall(function() return {fn(up(args,1,nargs))} end) _RV=ok and r or {} else _RV={} end return 2',
     CLOSE: 'do end',
     // === Anti-tamper opcodes ===
     // AT_HASH: hash a slice of the dispatch table; if mismatch with constant C, corrupt R[A]
@@ -121,12 +136,12 @@ function bodyFor(name) {
     STR_MATCH: 'R[A]=string.match(tostring(R[B]),tostring(R[C]))',
     STR_GMATCH: 'R[A]=string.gmatch(tostring(R[B]),tostring(R[C]))',
     STR_BYTE: 'R[A]=string.byte(tostring(R[B]),tonumber(R[C]) or 1)',
-    STR_CHAR: 'R[A]=string.char(tonumber(R[B]) or 0)',
+    STR_CHAR: 'R[A]=_CH(tonumber(R[B]) or 0)',
     STR_FORMAT: 'do local _f=_K[B+C*256+1] if _f then R[A]=string.format(_f,tostring(R[C])) end end',
     // === Table opcodes — type-guard against non-tables ===
     TBL_INSERT: 'do local _t=R[A] if type(_t)=="table" then table.insert(_t,R[B]) end end',
     TBL_REMOVE: 'do local _t=R[B] if type(_t)=="table" then R[A]=table.remove(_t,tonumber(R[C]) or #_t) end end',
-    TBL_CONCAT: 'do local _t=R[B] if type(_t)=="table" then R[A]=table.concat(_t,tostring(R[C])) end end',
+    TBL_CONCAT: 'do local _t=R[B] if type(_t)=="table" then local s="" local sep=tostring(R[C] or "") for i=1,#_t do if i>1 then s=s..sep end s=s..tostring(_t[i]or "") end R[A]=s end end',
     TBL_SORT: 'do local _t=R[A] if type(_t)=="table" then table.sort(_t) end end',
     TBL_LEN: 'do local _b=R[B] if type(_b)=="string" or type(_b)=="table" then R[A]=#_b else R[A]=0 end end',
     // === Type/op opcodes ===
@@ -143,29 +158,28 @@ function bodyFor(name) {
     VM_POP: 'do R[A]=_UV[#_UV] _UV[#_UV]=nil end',
     VM_XCHG: 'do local _t=_UV[B%32] _UV[B%32]=R[A] R[A]=_t end',
   };
-  const ALIAS = {
+    const ALIAS = {
     MOVE2: 'MOVE', MOVE3: 'MOVE',
     LOADK2: 'LOADK', LOADK3: 'LOADK', LOADN2: 'LOADN', LOADN3: 'LOADN',
     ADD2: 'ADD', SUB2: 'SUB', MUL2: 'MUL', DIV2: 'DIV', POW2: 'POW',
-    CALL1: 'CALL', CALL2: 'CALL', CALL3: 'CALL',
+    CONCAT2: 'CONCAT', CONCAT3: 'CONCAT',
+    CALL1: 'CALL', CALL2: 'CALL', CALL3: 'CALL', CALL4: 'CALL',
     RETURN0: 'RETURN', RETURN1: 'RETURN', RETURN2: 'RETURN',
     JMP0: 'JMP', JMP1: 'JMP', JMP2: 'JMP',
     TEST0: 'TEST', TEST1: 'TEST',
     GETTABLE2: 'GETTABLE', SETTABLE2: 'SETTABLE',
-    CONCAT2: 'CONCAT', LEN2: 'LEN', UNM2: 'UNM', NOT2: 'NOT',
-    FORPREP2: 'FORPREP', FORLOOP2: 'FORLOOP', TFORLOOP2: 'TFORLOOP', CLOSURE2: 'CLOSURE',
-    NEWTABLE0: 'NEWTABLE', NEWTABLE1: 'NEWTABLE',
-    NOP0: 'NOP', NOP1: 'NOP', NOP2: 'NOP', NOP3: 'NOP', NOP4: 'NOP', NOP5: 'NOP',
-    DECOY0: 'NOP', DECOY1: 'NOP', DECOY2: 'NOP', DECOY3: 'NOP', DECOY4: 'NOP', DECOY5: 'NOP',
-    DECOY6: 'NOP', DECOY7: 'NOP', DECOY8: 'NOP', DECOY9: 'NOP', DECOY10: 'NOP', DECOY11: 'NOP',
-    DECOY12: 'NOP', DECOY13: 'NOP', DECOY14: 'NOP', DECOY15: 'NOP',
-    TRAP0: 'NOP', TRAP1: 'NOP', TRAP2: 'NOP', TRAP3: 'NOP',
-    ADDI: 'ADD', SUBI: 'SUB', MULI: 'MUL', DIVI: 'DIV', MODI: 'MOD', EQI: 'EQ', LTI: 'LT', LEI: 'LE',
-    SELFB: 'SELF', LOADKX: 'LOADK', EXTRAARG: 'NOP',
-    GETTABUP: 'GETTABLE', SETTABUP: 'SETTABLE',
     GETFIELD2: 'GETFIELD', SETFIELD2: 'SETFIELD',
+    NEWTABLE0: 'NEWTABLE', NEWTABLE1: 'NEWTABLE',
     SETLIST0: 'SETLIST', SETLIST1: 'SETLIST',
     BAND2: 'BAND', BOR2: 'BOR', BXOR2: 'BXOR', SHL2: 'SHL', SHR2: 'SHR',
+    LEN2: 'LEN', UNM2: 'UNM', NOT2: 'NOT',
+    FORPREP2: 'FORPREP', FORLOOP2: 'FORLOOP', TFORLOOP2: 'TFORLOOP',
+    CLOSURE2: 'CLOSURE', NEWCLOSURE: 'CLOSURE', GETVARARGS: 'VARARG',
+    SELFB: 'SELF',
+    NAMECALL2: 'NAMECALL', NAMECALL3: 'NAMECALL',
+    GETTABLEKS2: 'GETTABLEKS', SETTABLEKS2: 'SETTABLEKS',
+    GETTABLEN2: 'GETTABLEN', SETTABLEN2: 'SETTABLEN',
+    GETTABUP: 'GETTABLE', SETTABUP: 'SETTABLE',
   };
   if (N[name]) return N[name];
   if (ALIAS[name] && N[ALIAS[name]]) return N[ALIAS[name]];
@@ -175,46 +189,74 @@ function bodyFor(name) {
 function emitConst(c) {
   if (typeof c === 'number') return String(c);
   if (typeof c === 'string') {
-    // UTF-8 bytes only (0-255) — charCodeAt is UTF-16 and breaks on Vietnamese etc.
     const bytes = [];
     for (let i = 0; i < c.length; i++) {
       let cp = c.charCodeAt(i);
       if (cp >= 0xd800 && cp <= 0xdbff && i + 1 < c.length) {
+        bytes.push(cp & 255);
         const lo = c.charCodeAt(++i);
-        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
-      }
-      if (cp < 0x80) bytes.push(cp);
-      else if (cp < 0x800) {
-        bytes.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
-      } else if (cp < 0x10000) {
-        bytes.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+        bytes.push(lo & 255);
       } else {
-        bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+        bytes.push(cp & 255);
       }
     }
     if (!bytes.length) return '""';
-    // clamp safety
-    for (let i = 0; i < bytes.length; i++) bytes[i] = bytes[i] & 255;
-    if (bytes.length > 80) {
+    // Obscure: arithmetic forms + small chunks — avoid plain decimal dumps
+    function obs(b) {
+      const r = (Math.random() * 40) | 0;
+      if (r % 3 === 0) return '(' + (b + r) + '-' + r + ')';
+      if (r % 3 === 1) return '(' + Math.max(0, b - r) + '+' + Math.min(b, r) + ')';
+      return String(b);
+    }
+    const parts = bytes.map(obs);
+    if (parts.length > 40) {
       const chunks = [];
-      for (let i = 0; i < bytes.length; i += 60)
-        chunks.push('string.char(' + bytes.slice(i, i + 60).join(',') + ')');
+      for (let i = 0; i < parts.length; i += 35)
+        chunks.push('_CH(' + parts.slice(i, i + 35).join(',') + ')');
       return '(' + chunks.join('..') + ')';
     }
-    return 'string.char(' + bytes.join(',') + ')';
+    return '_CH(' + parts.join(',') + ')';
   }
   if (typeof c === 'boolean') return c ? 'true' : 'false';
   return 'nil';
 }
 
-function emitProtoTable(protos, depth = 0, sk = 0) {
+/** Opaque proto field names — regenerated every emit so static dumps never match. */
+function makeProtoFields() {
+  const pool = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+  }
+  let k = 0;
+  const take = () => pool[k++];
+  return {
+    insts: take(), keys: take(), K: take(), maxReg: take(), nparams: take(),
+    isVararg: take(), upvalues: take(), protos: take(), isLocal: take(), index: take(),
+  };
+}
+
+function emitProtoTable(protos, depth = 0, sk = 0, F = null) {
+  if (!F) F = makeProtoFields();
   if (!protos || !protos.length) return '{}';
   const parts = [];
   for (const p of protos) {
-    const nested = emitProtoTable(p.protos || [], depth + 1, sk);
-    const ups = (p.upvalues || []).map(u => `{isLocal=${u.isLocal ? 'true' : 'false'},index=${u.index || 0}}`).join(',');
+    const nested = emitProtoTable(p.protos || [], depth + 1, sk, F);
+    const ups = (p.upvalues || []).map(u =>
+      `{${F.isLocal}=${u.isLocal ? 'true' : 'false'},${F.index}=${u.index || 0}}`
+    ).join(',');
     const keys = (p.insts || []).map((_, pci) => ((sk + Math.imul(pci, 0x9E3779B9)) >>> 0));
-    parts.push(`{insts={${(p.insts || []).join(',')}},keys={${keys.join(',')}},K={${(p.constants || []).map(emitConst).join(',')}},maxReg=${p.maxReg || 8},nparams=${p.nparams || 0},isVararg=${p.isVararg ? 'true' : 'false'},upvalues={${ups}},protos=${nested}}`);
+    // Numeric arrays stay as {n,n,...} so packVmData can fold them into vault slots
+    parts.push(
+      `{${F.insts}={${(p.insts || []).join(',')}},` +
+      `${F.keys}={${keys.join(',')}},` +
+      `${F.K}={${(p.constants || []).map(emitConst).join(',')}},` +
+      `${F.maxReg}=${p.maxReg || 8},` +
+      `${F.nparams}=${p.nparams || 0},` +
+      `${F.isVararg}=${p.isVararg ? 'true' : 'false'},` +
+      `${F.upvalues}={${ups}},` +
+      `${F.protos}=${nested}}`
+    );
   }
   return '{' + parts.join(',') + '}';
 }
@@ -232,8 +274,84 @@ function emitDispatchIfChain(physBody) {
   return lines;
 }
 
+
+/** Randomize all recognizable VM symbol names in emitted source. */
+export 
+function emitAntiDumpCharHelper() {
+  return 'local function _CH(...) local n=select("#",...) local s="" for i=1,n do local b=(select(i,...)or 0)%256 s=s..string.format("%c",b) end return s end ';
+}
+
+export function mangleVmSource(src) {
+  const used = new Set(['and','or','not','if','then','else','elseif','end','function','local','return','for','while','do','repeat','until','in','true','false','nil','break','goto']);
+  function rn() {
+    // SINGLE lowercase only (pack uses UPPERCASE — no collision)
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    if (!rn._n) rn._n = 0;
+    for (let attempt = 0; attempt < 26; attempt++) {
+      const s = alphabet[rn._n % 26];
+      rn._n++;
+      if (!used.has(s)) { used.add(s); return s; }
+    }
+    return alphabet[rn._n++ % 26];
+  }
+  const map = {
+    '__VM_RUN': rn(),
+    '_RUN_PROTO': rn(),
+    '_MAKE_CLOSURE': rn(),
+    '_CALL_PROTO': rn(),
+    '_VARARGS': rn(),
+    '_PROTOS': rn(),
+    '_KEYS': rn(),
+    '__step': rn(),
+    '__pstep': rn(),
+    '_integrity_check': rn(),
+    '_opaque': rn(),
+    '_junk_pool': rn(),
+    '_ENV': rn(),
+    '_TOP': rn(),
+    '_RV': rn(),
+    '_UV': rn(),
+    '_BC': rn(),
+    '_SK': rn(),
+    '_K': rn(),
+    '__vm_proto': rn(),
+  };
+  // Longest keys first
+  const keys = Object.keys(map).sort((a, b) => b.length - a.length);
+  let out = src;
+  for (const k of keys) {
+    const re = new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+    out = out.replace(re, map[k]);
+  }
+  // Rename residual _d0.._d7 decoys
+  for (let d = 0; d < 12; d++) {
+    out = out.replace(new RegExp('\\\\_d' + d + '\\\\b', 'g'), rn());
+  }
+  return out;
+}
+
 export function emitVMRuntime(compiled) {
   const { map, insts, constants, maxReg, protos, mode } = compiled;
+  // Per-build opaque proto field names (never 'insts'/'K'/'maxReg' in output)
+  const PF = makeProtoFields();
+  function pfSub(s) {
+    return String(s)
+      .replace(/proto\.insts/g, 'proto.' + PF.insts)
+      .replace(/proto\.keys/g, 'proto.' + PF.keys)
+      .replace(/proto\.K\b/g, 'proto.' + PF.K)
+      .replace(/proto\.maxReg/g, 'proto.' + PF.maxReg)
+      .replace(/proto\.nparams/g, 'proto.' + PF.nparams)
+      .replace(/proto\.isVararg/g, 'proto.' + PF.isVararg)
+      .replace(/proto\.upvalues/g, 'proto.' + PF.upvalues)
+      .replace(/proto\.protos/g, 'proto.' + PF.protos)
+      .replace(/sub\.upvalues/g, 'sub.' + PF.upvalues)
+      .replace(/sub\.insts/g, 'sub.' + PF.insts)
+      .replace(/sub\.K\b/g, 'sub.' + PF.K)
+      .replace(/sub\.maxReg/g, 'sub.' + PF.maxReg)
+      .replace(/u\.isLocal/g, 'u.' + PF.isLocal)
+      .replace(/u\.index/g, 'u.' + PF.index);
+  }
+
 
   // Long/complex Roblox scripts: NO full 130-op VM (hits Luau 255-register limit).
   // Tiny loader only — AT still runs from pack layer before this payload.
@@ -242,12 +360,13 @@ export function emitVMRuntime(compiled) {
     let eq = '';
     while (src.indexOf(']' + eq + ']') !== -1) eq += '=';
     const L = [];
+  L.push(emitAntiDumpCharHelper());
     L.push('local _L=loadstring or load');
     L.push('local _src=[' + eq + '[' + src + ']' + eq + ']');
     L.push('local _fn,_e=_L(_src)');
     L.push('if not _fn then error("[8XMS] payload compile fail: "..tostring(_e),0) end');
     L.push('return _fn()');
-    return L.join('\n');
+    return pfSub(L.join('\n'));
   }
 
   if (mode === 'vm-ast' || (mode && String(mode).indexOf('vm') === 0)) {
@@ -255,10 +374,14 @@ export function emitVMRuntime(compiled) {
   {
     const toPhysC = map.toPhys;
     const usedPhys = new Set();
-    for (const ins of (insts || [])) {
-      usedPhys.add(Math.floor(Number(ins) / 16777216) % 256);
+    const sk0 = (map && map.streamKey) || 0;
+    for (let pci = 0; pci < (insts || []).length; pci++) {
+      const ins = Number(insts[pci]) >>> 0;
+      const k = (sk0 + Math.imul(pci, 0x9E3779B9)) >>> 0;
+      const raw = (ins ^ k) >>> 0;
+      usedPhys.add(raw & 255);
     }
-    for (const n of ['HALT','NOP','LOADK','LOADN','LOADSTR','GETGLOBAL','SETGLOBAL','CALL','RETURN','MOVE','LOADB','LOADNIL','GETTABLE','SETTABLE','GETFIELD','SETFIELD','SELF','CLOSURE','JMP','TEST','TESTSET','EQ','LT','LE','ADD','SUB','MUL','DIV','CONCAT','NEWTABLE','SETLIST','FORPREP','FORLOOP','TFORCALL','TFORLOOP','GETUPVAL','SETUPVAL','NOT','UNM','LEN','TAILCALL','VARARG']) {
+    for (const n of ['HALT','NOP','LOADK','LOADN','LOADSTR','GETGLOBAL','SETGLOBAL','CALL','RETURN','MOVE','LOADB','LOADNIL','GETTABLE','SETTABLE','GETFIELD','SETFIELD','SELF','NAMECALL','NAMECALL2','GETTABLEKS','GETTABLEKS2','GETTABLEN','SETTABLEKS','SETTABLEN','CLOSURE','JMP','TEST','TESTSET','EQ','LT','LE','ADD','SUB','MUL','DIV','CONCAT','NEWTABLE','SETLIST','FORPREP','FORLOOP','TFORCALL','TFORLOOP','GETUPVAL','SETUPVAL','NOT','UNM','LEN','TAILCALL','VARARG']) {
       if (toPhysC[n] !== undefined) usedPhys.add(toPhysC[n]);
     }
     const physBodyC = new Array(130).fill('do end');
@@ -270,21 +393,25 @@ export function emitVMRuntime(compiled) {
     }
     const usedList = [...usedPhys].filter(p => p >= 0 && p < 130).sort((a,b) => a - b);
     function emitStepFn(name) {
+      // Table dispatch — no op==N chain (harder to pattern-match)
       const lines = [];
-      lines.push('local function ' + name + '(op,A,B,C)');
+      const tname = name + '_t';
+      lines.push('local ' + tname + '={}');
       for (let i = 0; i < usedList.length; i++) {
         const pp = usedList[i];
         const body = physBodyC[pp] || 'do end';
-        lines.push((i === 0 ? 'if' : 'elseif') + ' op==' + pp + ' then ' + body);
+        lines.push(tname + '[' + pp + ']=function(A,B,C) ' + body + ' end');
       }
-      lines.push('end');
+      lines.push('local function ' + name + '(op,A,B,C)');
+      lines.push('local f=' + tname + '[op]; if f then return f(A,B,C) end');
       lines.push('end');
       return lines;
     }
     const sk = (map && map.streamKey) || 0;
     const keysArr = (insts || []).map((_, pci) => ((sk + Math.imul(pci, 0x9E3779B9)) >>> 0));
-    const LC = [];
+    const LC = []; LC.push(emitAntiDumpCharHelper());
     LC.push('local function __VM_RUN(...)');
+    LC.push('if not table.create then table.create=function(n,v) local t={} for i=1,(n or 0) do t[i]=v end return t end end');
     LC.push('local bit32=bit32');
     LC.push('local bxor=bit32 and bit32.bxor or function(a,b) local r,p=0,1 for _=1,32 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end');
     LC.push('local R=table.create(' + Math.max(16, (maxReg || 8) + 4) + ')');
@@ -298,14 +425,31 @@ export function emitVMRuntime(compiled) {
     LC.push('local _RV');
     LC.push('local _UV={}');
     LC.push('local _VARARGS={...}');
-    LC.push('local _PROTOS=' + emitProtoTable(protos || [], 0, sk));
-    LC.push('local function _RUN_PROTO(proto,args,uv)');
+    LC.push('local _PROTOS=' + emitProtoTable(protos || [], 0, sk, PF));
+    LC.push('local _RUN_PROTO');
+    LC.push('local _MAKE_CLOSURE');
+    LC.push('local _CALL_PROTO');
+    LC.push('_CALL_PROTO=function(clos,args)');
+    LC.push('if type(clos)=="table" and clos.__vm_proto then return _RUN_PROTO(clos.__vm_proto,args,clos.__uv) end');
+    LC.push('end');
+    LC.push('_MAKE_CLOSURE=function(pi)');
+    LC.push('local sub=_PROTOS[pi+1]');
+    LC.push('if not sub then return function() end end');
+    LC.push('local subuv={}');
+    LC.push('for i,u in ipairs(sub.upvalues or {}) do');
+    LC.push('if u.isLocal then subuv[i]={r=R,i=u.index} else subuv[i]=_UV[u.index+1] end');
+    LC.push('end');
+    LC.push('return function(...) return _RUN_PROTO(sub,{...},subuv) end');
+    LC.push('end');
+    LC.push('_RUN_PROTO=function(proto,args,uv)');
     LC.push('local R={};for i=0,(proto.maxReg or 16)+4 do R[i]=nil end');
     LC.push('local _K=proto.K or {};local _BC=proto.insts or {};local _KEYS=proto.keys or {};local PC=1;local _TOP=0;local _RV;local _UV=uv or {}');
     LC.push('local _VARARGS=proto.isVararg and args or {}');
     LC.push('for i=1,(proto.nparams or 0) do R[i-1]=args[i] end');
     for (const line of emitStepFn('__pstep')) LC.push(line);
+    LC.push('local _st=0');
     LC.push('while PC<=#_BC do');
+    LC.push('_st=_st+1;if _st>2500000 then break end');
     LC.push('local ins=_BC[PC];if not ins then break end');
     LC.push('local _raw=bxor(ins,_KEYS[PC] or 0)');
     LC.push('local op=_raw%256 local C=math.floor(_raw/256)%256 local B=math.floor(_raw/65536)%256 local A=math.floor(_raw/16777216)%256');
@@ -317,7 +461,9 @@ export function emitVMRuntime(compiled) {
     LC.push('return table.unpack(_RV or {})');
     LC.push('end');
     for (const line of emitStepFn('__step')) LC.push(line);
+    LC.push('local _st=0');
     LC.push('while PC<=#_BC do');
+    LC.push('_st=_st+1;if _st>2500000 then break end');
     LC.push('local ins=_BC[PC];if not ins then break end');
     LC.push('local _raw=bxor(ins,_KEYS[PC] or 0)');
     LC.push('local op=_raw%256 local C=math.floor(_raw/256)%256 local B=math.floor(_raw/65536)%256 local A=math.floor(_raw/16777216)%256');
@@ -328,7 +474,7 @@ export function emitVMRuntime(compiled) {
     LC.push('end');
     LC.push('end');
     LC.push('return __VM_RUN()');
-    return LC.join('\n');
+    return pfSub(LC.join('\n'));
   }
 
   const toPhys = map.toPhys;
@@ -345,6 +491,7 @@ export function emitVMRuntime(compiled) {
     noise.push(((i * 19 + mapKey * 3) ^ (physBody[i].length * 5)) & 255);
 
   const L = [];
+  L.push(emitAntiDumpCharHelper());
   L.push('local function __VM_RUN(...)');
   L.push('local bit32=bit32');
   L.push('local bxor=bit32 and bit32.bxor or function(a,b) local r,p=0,1 for _=1,32 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end');
@@ -354,12 +501,12 @@ export function emitVMRuntime(compiled) {
   // We use a metatable proxy so all string.* calls auto-coerce the first arg.
   L.push('local _orig_str=string');
   L.push('local _str_cache={}');
-  L.push('string=setmetatable({}, {__index=function(t,k) local v=_str_cache[k] if v then return v end local f=_orig_str[k] if type(f)=="function" then v=function(s,...) if type(s)~="string" then s=tostring(s) end return f(s,...) end else v=f end _str_cache[k]=v return v end})');
+  L.push('string=setmetatable({}, {__index=function(t,k) local v=_str_cache[k] if v then return v end local f=_orig_str[k] if type(f)~="function" then _str_cache[k]=f return f end if k=="char" or k=="pack" or k=="format" then v=function(...) return f(...) end else v=function(s,...) if s~=nil and type(s)~="string" then s=tostring(s) end return f(s,...) end end _str_cache[k]=v return v end})');
   L.push(`local _MK=${mapKey}`);
   L.push(`local _NO={${noise.join(',')}}`);
   L.push(`local _K={${(constants || []).map(emitConst).join(',')}}`);
   L.push(`local _BC={${(insts || []).join(',')}}`);
-  L.push(`local _PROTOS=${emitProtoTable(protos || [])}`);
+  L.push(`local _PROTOS=${emitProtoTable(protos || [], 0, (map && map.streamKey) || 0, PF)}`);
   L.push('local R={}');
   L.push(`for i=0,${Math.max((maxReg || 16) + 8, 32)} do R[i]=nil end`);
   L.push('local PC=1');
@@ -394,8 +541,10 @@ export function emitVMRuntime(compiled) {
   L.push('return function(...) return _RUN_PROTO(sub,{...},subuv) end');
   L.push('end');
   L.push('_CALL_PROTO=function(clos, args) return _RUN_PROTO(clos.__vm_proto, args, clos.__uv) end');
+  L.push('local _st=0');
   L.push('while PC<=#_BC do');
-  L.push('local ins=_BC[PC];if not ins then break end;PC=PC+1');
+  L.push('_st=_st+1;if _st>2500000 then break end');
+  L.push('local ins=_BC[PC];if ins==nil then break end;ins=tonumber(ins) or 0;PC=PC+1');
   L.push('local op=math.floor(ins/16777216)%256;local A=math.floor(ins/65536)%256;local B=math.floor(ins/256)%256;local C=ins%256');
   L.push('local sig=__step(op,A,B,C)');
   L.push('if sig==1 then break end;if sig==2 then return table.unpack(_RV or {}) end');
@@ -440,17 +589,19 @@ end`);
   // Opaque predicate helper — always returns true but looks complex
   L.push('local function _opaque(x) return (bxor(x,0)==x) and (math.abs(0)>=0) and (tostring(x)~=nil) end');
   // Junk string pool — fake constants that look like real string literals
-  L.push('local _junk_pool={string.char(' + Array.from({length: 16}, (_, i) => (65 + i % 26)).join(',') + ')}');
+  L.push('local _junk_pool={_CH(' + Array.from({length: 16}, (_, i) => (65 + i % 26)).join(',') + ')}');
   for (let j = 0; j < 8; j++) {
-    L.push(`_junk_pool[${j + 2}]=string.char(${Array.from({length: 8}, () => 65 + Math.floor(Math.random() * 26)).join(',')})`);
+    L.push(`_junk_pool[${j + 2}]=_CH(${Array.from({length: 8}, () => 65 + Math.floor(Math.random() * 26)).join(',')})`);
   }
 
   // Call integrity check at startup (result unused but execution required)
   L.push('local _ic=_integrity_check()');
   L.push('local _op=_opaque(_MK)');
 
+  L.push('local _st=0');
   L.push('while PC<=#_BC do');
-  L.push('local ins=_BC[PC];if not ins then break end;PC=PC+1');
+  L.push('_st=_st+1;if _st>2500000 then break end');
+  L.push('local ins=_BC[PC];if ins==nil then break end;ins=tonumber(ins) or 0;PC=PC+1');
   L.push('local op=math.floor(ins/16777216)%256');
   L.push('local A=math.floor(ins/65536)%256');
   L.push('local B=math.floor(ins/256)%256');
@@ -461,7 +612,7 @@ end`);
   L.push('end');  // closes while
   L.push('end');  // closes __VM_RUN function
   L.push('return __VM_RUN()');
-  return L.join('\n');
+  return pfSub(L.join('\n'));
 }
 }
 
@@ -490,7 +641,7 @@ export function emitVMRuntimeSplit(compiled) {
     }
   }
   collectOps(insts, protos);
-  for (const n of ['HALT','NOP','LOADK','LOADN','LOADSTR','GETGLOBAL','SETGLOBAL','CALL','RETURN','MOVE','LOADB','LOADNIL','GETTABLE','SETTABLE','GETFIELD','SETFIELD','SELF','CLOSURE','JMP','TEST','TESTSET','EQ','LT','LE','ADD','SUB','MUL','DIV','CONCAT','NEWTABLE','SETLIST','FORPREP','FORLOOP','TFORCALL','TFORLOOP','GETUPVAL','SETUPVAL','NOT','UNM','LEN','TAILCALL','VARARG']) {
+  for (const n of ['HALT','NOP','LOADK','LOADN','LOADSTR','GETGLOBAL','SETGLOBAL','CALL','RETURN','MOVE','LOADB','LOADNIL','GETTABLE','SETTABLE','GETFIELD','SETFIELD','SELF','NAMECALL','NAMECALL2','GETTABLEKS','GETTABLEKS2','GETTABLEN','SETTABLEKS','SETTABLEN','CLOSURE','JMP','TEST','TESTSET','EQ','LT','LE','ADD','SUB','MUL','DIV','CONCAT','NEWTABLE','SETLIST','FORPREP','FORLOOP','TFORCALL','TFORLOOP','GETUPVAL','SETUPVAL','NOT','UNM','LEN','TAILCALL','VARARG']) {
     if (toPhysC[n] !== undefined) usedPhys.add(toPhysC[n]);
   }
   const physBodyC = new Array(130).fill('do end');
@@ -502,17 +653,20 @@ export function emitVMRuntimeSplit(compiled) {
   }
   const usedList = [...usedPhys].filter(p => p >= 0 && p < 130).sort((a,b) => a - b);
   function emitStepFn(name) {
+    // Table dispatch — no op==N chain (harder to pattern-match)
     const lines = [];
-    lines.push('local function ' + name + '(op,A,B,C)');
+    const tname = name + '_t';
+    lines.push('local ' + tname + '={}');
     for (let i = 0; i < usedList.length; i++) {
       const pp = usedList[i];
       const body = physBodyC[pp] || 'do end';
-      lines.push((i === 0 ? 'if' : 'elseif') + ' op==' + pp + ' then ' + body);
+      lines.push(tname + '[' + pp + ']=function(A,B,C) ' + body + ' end');
     }
-    lines.push('end');
+    lines.push('local function ' + name + '(op,A,B,C)');
+    lines.push('local f=' + tname + '[op]; if f then return f(A,B,C) end');
     lines.push('end');
     return lines;
-  }
+    }
   const sk = (map && map.streamKey) || 0;
   const keysArr = (insts || []).map((_, pci) => ((sk + Math.imul(pci, 0x9E3779B9)) >>> 0));
 
@@ -624,7 +778,7 @@ export function emitVMRuntimeSplit(compiled) {
     return lines;
   }
 
-  const LC = [];
+  const LC = []; LC.push(emitAntiDumpCharHelper());
   LC.push('local function ' + nRun + '(...)');
   LC.push('local bit32=bit32');
   LC.push('local bxor=bit32 and bit32.bxor or function(a,b) local r,p=0,1 for _=1,32 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end');
@@ -648,7 +802,9 @@ export function emitVMRuntimeSplit(compiled) {
   LC.push('local _VARARGS=proto.isVararg and args or {}');
   LC.push('for i=1,(proto.nparams or 0) do R[i-1]=args[i] end');
   for (const line of emitStepFnNamed(nPStep)) LC.push(line);
-  LC.push('while PC<=#_BC do');
+  LC.push('local _st=0');
+    LC.push('while PC<=#_BC do');
+    LC.push('_st=_st+1;if _st>2500000 then break end');
   LC.push('local ins=_BC[PC];if not ins then break end');
   LC.push('local _raw=bxor(ins,_KEYS[PC] or 0)');
   LC.push('local op=_raw%256 local C=math.floor(_raw/256)%256 local B=math.floor(_raw/65536)%256 local A=math.floor(_raw/16777216)%256');
@@ -660,7 +816,9 @@ export function emitVMRuntimeSplit(compiled) {
   LC.push('return table.unpack(_RV or {})');
   LC.push('end');
   for (const line of emitStepFnNamed(nStep)) LC.push(line);
-  LC.push('while PC<=#_BC do');
+  LC.push('local _st=0');
+    LC.push('while PC<=#_BC do');
+    LC.push('_st=_st+1;if _st>2500000 then break end');
   LC.push('local ins=_BC[PC];if not ins then break end');
   LC.push('local _raw=bxor(ins,_KEYS[PC] or 0)');
   LC.push('local op=_raw%256 local C=math.floor(_raw/256)%256 local B=math.floor(_raw/65536)%256 local A=math.floor(_raw/16777216)%256');

@@ -55,6 +55,33 @@ export function runLuauCompileText(source) {
   }
 }
 
+
+/** Scan for K(n) [bracket] allowing ] inside quotes. */
+function matchKBracket(joined, from = 0) {
+  const km = joined.slice(from).match(/K(\d+)\s*\[/);
+  if (!km) return null;
+  const kIdx = +km[1];
+  const start = from + km.index + km[0].length - 1; // at '['
+  let i = start, depth = 0, inQ = null, esc = false, end = -1;
+  for (; i < joined.length; i++) {
+    const ch = joined[i];
+    if (inQ) {
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === inQ) inQ = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { inQ = ch; continue; }
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end < 0) return { idx: kIdx, bracket: null, end: start };
+  return { idx: kIdx, bracket: joined.slice(start, end + 1), end: end + 1 };
+}
+
 function parseConstBracket(s) {
   // [1] / ['print'] / ["a"] / [true] / [nil]
   const m = s.match(/^\[(.*)\]$/s);
@@ -193,11 +220,37 @@ function lowerFunction(fn, allFuncs, captureMap, resolveProto) {
   // First pass: collect K literals from lines
   for (const rl of fn.rawLines) {
     const joined = (rl.args || []).join(' ');
-    // Match K0 ['x'] or K1 [1]
-    const re = /K(\d+)\s*(\[[^\]]*\])/g;
-    let m;
-    while ((m = re.exec(joined))) {
-      ensureK(+m[1], parseConstBracket(m[2]));
+    // Match K0 ['x'] or K1 [1] — bracket may contain ] inside quotes
+    {
+      let pos = 0;
+      while (true) {
+        const km = joined.slice(pos).match(/K(\d+)\s*\[/);
+        if (!km) break;
+        const kIdx = +km[1];
+        const start = pos + km.index + km[0].length - 1; // at '['
+        // scan balanced bracket respecting quotes
+        let i = start, depth = 0, inQ = null, esc = false;
+        let end = -1;
+        for (; i < joined.length; i++) {
+          const ch = joined[i];
+          if (inQ) {
+            if (esc) { esc = false; continue; }
+            if (ch === '\\\\') { esc = true; continue; }
+            if (ch === inQ) inQ = null;
+            continue;
+          }
+          if (ch === "'" || ch === '"') { inQ = ch; continue; }
+          if (ch === '[') depth++;
+          else if (ch === ']') {
+            depth--;
+            if (depth === 0) { end = i; break; }
+          }
+        }
+        if (end < 0) break;
+        const bracket = joined.slice(start, end + 1);
+        ensureK(kIdx, parseConstBracket(bracket));
+        pos = end + 1;
+      }
     }
     // bare Kn
     for (const a of rl.args || []) {
@@ -234,10 +287,15 @@ function lowerFunction(fn, allFuncs, captureMap, resolveProto) {
     // Helpers for K with value from remaining args
     const kFrom = (i) => {
       const joined = args.slice(i).join(' ');
-      const m = joined.match(/^K(\d+)\s*(\[[^\]]*\])?/);
-      if (!m) return { slot: 0, val: null };
-      const val = m[2] ? parseConstBracket(m[2]) : undefined;
-      return { slot: ensureK(+m[1], val), idx: +m[1] };
+      const mk = matchKBracket(joined, 0);
+      if (!mk) {
+        // K0 without bracket
+        const m2 = joined.match(/^K(\d+)/);
+        if (!m2) return { slot: 0, val: null };
+        return { slot: ensureK(+m2[1], undefined), idx: +m2[1] };
+      }
+      const val = mk.bracket ? parseConstBracket(mk.bracket) : undefined;
+      return { slot: ensureK(mk.idx, val), idx: mk.idx };
     };
 
     switch (op) {
@@ -311,8 +369,8 @@ function lowerFunction(fn, allFuncs, captureMap, resolveProto) {
         }
         // also match path in brackets
         const joined = args.join(' ');
-        const sm = joined.match(/K(\d+)\s*(\[[^\]]*\])/);
-        if (sm) slot = ensureK(+sm[1], parseConstBracket(sm[2]));
+        const sm = matchKBracket(joined, 0);
+        if (sm && sm.bracket) slot = ensureK(sm.idx, parseConstBracket(sm.bracket));
         attach([
           { op: 'LOADK', a: ra, b: slot & 255, c: (slot >> 8) & 255, labels: [] },
           { op: 'GETGLOBAL', a: ra, b: ra, c: 0, labels: [] },
@@ -338,7 +396,7 @@ function lowerFunction(fn, allFuncs, captureMap, resolveProto) {
         const tmp = Math.max(ra, rb) + 8;
         attach([
           { op: 'LOADK', a: tmp, b: k.slot & 255, c: (k.slot >> 8) & 255, labels: [] },
-          { op: 'GETTABLE', a: ra, b: rb, c: tmp, labels: [] },
+          { op: 'GETTABLEKS2', a: ra, b: rb, c: tmp, labels: [] },
         ]);
         break;
       }
@@ -355,14 +413,14 @@ function lowerFunction(fn, allFuncs, captureMap, resolveProto) {
         break;
       }
       case 'NAMECALL': {
-        // NAMECALL Ra Rb Kmethod  → SELF Ra Rb method
+        // Catph-style: single NAMECALL op (method name via const → load into temp then NAMECALL2)
         const ra = regNum(args[0]);
         const rb = regNum(args[1]);
         const k = kFrom(2);
         const tmp = Math.max(ra, rb) + 8;
         attach([
           { op: 'LOADK', a: tmp, b: k.slot & 255, c: (k.slot >> 8) & 255, labels: [] },
-          { op: 'SELF', a: ra, b: rb, c: tmp, labels: [] },
+          { op: 'NAMECALL2', a: ra, b: rb, c: tmp, labels: [] },
         ]);
         break;
       }
@@ -747,22 +805,53 @@ export function compileOfficialToVM(source, rng = Math.random) {
   const main = lowered[lowered.length - 1];
   const childProtos = lowered.slice(0, -1);
 
+  // Catph-style alias pool: same semantics, different physical opcodes per build
+  // (polymorphic ISA — Catph strength without changing WAN shell/pack output)
+  const CATPH_ALIAS = {
+    MOVE: ['MOVE', 'MOVE2', 'MOVE3'],
+    LOADK: ['LOADK', 'LOADK2', 'LOADK3'],
+    LOADN: ['LOADN', 'LOADN2', 'LOADN3'],
+    ADD: ['ADD', 'ADD2'], SUB: ['SUB', 'SUB2'], MUL: ['MUL', 'MUL2'],
+    DIV: ['DIV', 'DIV2'], POW: ['POW', 'POW2'],
+    CONCAT: ['CONCAT', 'CONCAT2', 'CONCAT3'],
+    CALL: ['CALL', 'CALL1', 'CALL2', 'CALL3', 'CALL4'],
+    RETURN: ['RETURN', 'RETURN0', 'RETURN1', 'RETURN2'],
+    JMP: ['JMP', 'JMP0', 'JMP1', 'JMP2'],
+    TEST: ['TEST', 'TEST0', 'TEST1'],
+    GETTABLE: ['GETTABLE', 'GETTABLE2'], SETTABLE: ['SETTABLE', 'SETTABLE2'],
+    GETFIELD: ['GETFIELD', 'GETFIELD2'], SETFIELD: ['SETFIELD', 'SETFIELD2'],
+    GETTABLEKS: ['GETTABLEKS', 'GETTABLEKS2'], SETTABLEKS: ['SETTABLEKS', 'SETTABLEKS2'],
+    GETTABLEN: ['GETTABLEN', 'GETTABLEN2'], SETTABLEN: ['SETTABLEN', 'SETTABLEN2'],
+    NAMECALL: ['NAMECALL', 'NAMECALL2', 'NAMECALL3'],
+    NAMECALL2: ['NAMECALL2', 'NAMECALL3', 'NAMECALL'],
+    NAMECALL3: ['NAMECALL3', 'NAMECALL2', 'NAMECALL'],
+    NEWTABLE: ['NEWTABLE', 'NEWTABLE0', 'NEWTABLE1'],
+    SETLIST: ['SETLIST', 'SETLIST0', 'SETLIST1'],
+    BAND: ['BAND', 'BAND2'], BOR: ['BOR', 'BOR2'], BXOR: ['BXOR', 'BXOR2'],
+    SHL: ['SHL', 'SHL2'], SHR: ['SHR', 'SHR2'],
+    LEN: ['LEN', 'LEN2'], UNM: ['UNM', 'UNM2'], NOT: ['NOT', 'NOT2'],
+    FORPREP: ['FORPREP', 'FORPREP2'], FORLOOP: ['FORLOOP', 'FORLOOP2'],
+    TFORLOOP: ['TFORLOOP', 'TFORLOOP2'],
+    CLOSURE: ['CLOSURE', 'CLOSURE2', 'NEWCLOSURE'],
+    SELF: ['SELF', 'SELFB'], VARARG: ['VARARG', 'GETVARARGS'],
+  };
+  function pickAlias(op) { return op; }
+
   function packLogical(logical, sk) {
     const insts = [];
     for (let i = 0; i < logical.length; i++) {
       const { op, a, b, c } = logical[i];
-      // Map JUMPIF* to closest
       let name = op;
       if (name === 'JUMPIFNOTLE' || name === 'JUMPIFLE' || name === 'JUMPIFLT' ||
           name === 'JUMPIFNOTLT' || name === 'JUMPIFEQ' || name === 'JUMPIFNOTEQ' ||
           name === 'JUMPIF' || name === 'JUMPIFNOT') {
-        // Encode as custom aliases — runtime will handle if we add them; else JMP only (weak)
-        // Better: already expanded JUMPIF to TEST+JMP
+        // already expanded JUMPIF → TEST+JMP upstream
       }
-      const phys = map.toPhys[name] ?? map.toPhys.NOP;
+      // Catph-strength: polymorphic alias before phys map
+      name = pickAlias(name);
+      const phys = map.toPhys[name] ?? map.toPhys[op] ?? map.toPhys.NOP;
       insts.push(packInst(phys, a, b, c, sk, i));
     }
-    // ensure HALT
     insts.push(packInst(map.toPhys.HALT ?? 0, 0, 0, 0, sk, insts.length));
     return insts;
   }
