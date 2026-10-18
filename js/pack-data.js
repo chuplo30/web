@@ -74,8 +74,10 @@ export function packVmData(src) {
     while ((m = re2.exec(src))) rn._used[m[1]] = 1;
   }
   const ka = makeKey20(), kb = makeKey20();
+  // 40–80 keys total: ka(20)+kb(20)+extra(0..40)
+  const nExtra = randInt(0, 40);
   const extra = [];
-  for (let i = 0; i < 0; i++) extra.push(randInt(0, 255)); // ka+kb = 40 keys
+  for (let i = 0; i < nExtra; i++) extra.push(randInt(0, 255));
   const allKeys = ka.concat(kb).concat(extra);
 
   // number arrays: pack bytecode streams (incl. nested field={n,n,n})
@@ -187,7 +189,7 @@ export function packVmData(src) {
   //   40 keys scattered (shuffled writes) + 2–4 fake vmaps (same shape, random names)
   //   real rebuild tables look identical to fakes
   const tName = rn(), nA = rn(), nB = rn(), nC = rn(), nD = rn();
-  const nE = rn(), nF = rn(); // extra fake vmaps
+  const nE = rn(), nF = rn(), nG = rn(), nHH = rn(); // extra fake vmaps
   const nBx = rn(), nDfn = rn(), nP = rn(), nSp = rn(), nNa = rn();
   const order = allKeys.map((_, i) => i);
   for (let i = order.length - 1; i > 0; i--) {
@@ -249,13 +251,14 @@ export function packVmData(src) {
   // dead branches swap real <-> fake (never taken) — all names look equal
   pieces.push('if false then ' + nA + '=' + nC + ' ' + nB + '=' + nD + ' end');
   pieces.push('if (0>1) then ' + nA + '=' + nE + ' ' + nB + '=' + nF + ' end');
+  pieces.push('if (1<0) then ' + nA + '=' + nG + ' ' + nB + '=' + nHH + ' end');
   pieces.push('local ' + rn(true) + '=' + junkLS());
   pieces.push('local ' + rn(true) + '=' + junkLS());
   const packStr = encode20Bytes(rawBytes, ka, kb);
   const expr = chunkLongstring(packStr, 1200);
 
   const nCh=rn(),nCat=rn(),nAb=rn();
-  const nOut=rn(),nRaw=rn(),nLen=rn(),nX2=rn(),nHt=rn(),nHx=rn(),nBy=rn(),nH=rn(),nId=rn();
+  const nOut=rn(),nRaw=rn(),nLen=rn(),nX2=rn(),nHt=rn(),nHx=rn(),nBy=rn(),nHh=rn(),nId=rn();
   const nRu=rn(),nKnd=rn(),nCnt=rn(),nLL=rn(),nT=rn(),nB0=rn(),nB1=rn(),nB2=rn(),nB3=rn();
   const nC1=rn(),nC2=rn(),nC3=rn(),nC4=rn(),nV=rn(),nJ=rn(),nXv=rn();
   {
@@ -267,7 +270,7 @@ export function packVmData(src) {
   }
   const decFn =
     'local function '+nBx+'(a,b) a=math.floor((tonumber(a)or 0)%256) b=math.floor((tonumber(b)or 0)%256) if bit32 and bit32.bxor then return bit32.bxor(a,b)%256 end local r,p=0,1 for i=0,7 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor((a-x)/2) b=math.floor((b-y)/2) p=p*2 end return r%256 end '
-    + 'local function '+nDfn+'(p,ka,kb) if type(p)~="string" or #p<5 then return "" end local A=33 local '+nOut+'={} local i=1 while i+4<=#p do local '+nV+'=0 for '+nJ+'=0,4 do '+nV+'='+nV+'*94+((string.byte(p,i+'+nJ+')or A)-A) end local '+nC1+'=math.floor('+nV+'/16777216)%256 local '+nC2+'=math.floor('+nV+'/65536)%256 local '+nC3+'=math.floor('+nV+'/256)%256 local '+nC4+'='+nV+'%256 '+nOut+'[#'+nOut+'+1]='+nCh+'('+nC1+'%256,'+nC2+'%256,'+nC3+'%256,'+nC4+'%256) i=i+5 end local '+nRaw+'='+nCat+'('+nOut+') local '+nLen+'=(string.byte('+nRaw+',1)or 0)*16777216+(string.byte('+nRaw+',2)or 0)*65536+(string.byte('+nRaw+',3)or 0)*256+(string.byte('+nRaw+',4)or 0) if '+nLen+'<0 or '+nLen+'>#'+nRaw+'-4 then return "" end local '+nX2+'=string.sub('+nRaw+',5,4+'+nLen+') local '+nHt+'={} for i=1,#'+nX2+' do local b=string.byte('+nX2+',i)or 0 local '+nXv+'=tonumber(kb[((i-1)%20)+1])or 0 '+nHt+'[i]='+nCh+'('+nBx+'(b,'+nXv+')) end local '+nHx+'='+nCat+'('+nHt+') local '+nBy+'={} for i=1,#'+nHx+',2 do local '+nH+'=tonumber(string.sub('+nHx+',i,i+1),16)or 0 local '+nId+'=(math.floor((i-1)/2)%20)+1 local '+nXv+'=tonumber(ka['+nId+'])or 0 '+nBy+'[#'+nBy+'+1]='+nCh+'('+nBx+'('+nH+','+nXv+')) end return '+nCat+'('+nBy+') end ';
+    + 'local function '+nDfn+'(p,ka,kb) if type(p)~="string" or #p<5 then return "" end local A=33 local '+nOut+'={} local i=1 while i+4<=#p do local '+nV+'=0 for '+nJ+'=0,4 do '+nV+'='+nV+'*94+((string.byte(p,i+'+nJ+')or A)-A) end local '+nC1+'=math.floor('+nV+'/16777216)%256 local '+nC2+'=math.floor('+nV+'/65536)%256 local '+nC3+'=math.floor('+nV+'/256)%256 local '+nC4+'='+nV+'%256 '+nOut+'[#'+nOut+'+1]='+nCh+'('+nC1+'%256,'+nC2+'%256,'+nC3+'%256,'+nC4+'%256) i=i+5 end local '+nRaw+'='+nCat+'('+nOut+') local '+nLen+'=(string.byte('+nRaw+',1)or 0)*16777216+(string.byte('+nRaw+',2)or 0)*65536+(string.byte('+nRaw+',3)or 0)*256+(string.byte('+nRaw+',4)or 0) if '+nLen+'<0 or '+nLen+'>#'+nRaw+'-4 then return "" end local '+nX2+'=string.sub('+nRaw+',5,4+'+nLen+') local '+nHt+'={} for i=1,#'+nX2+' do local b=string.byte('+nX2+',i)or 0 local '+nXv+'=tonumber(kb[((i-1)%20)+1])or 0 '+nHt+'[i]='+nCh+'('+nBx+'(b,'+nXv+')) end local '+nHx+'='+nCat+'('+nHt+') local '+nBy+'={} for i=1,#'+nHx+',2 do local '+nHh+'=tonumber(string.sub('+nHx+',i,i+1),16)or 0 local '+nId+'=(math.floor((i-1)/2)%20)+1 local '+nXv+'=tonumber(ka['+nId+'])or 0 '+nBy+'[#'+nBy+'+1]='+nCh+'('+nBx+'('+nHh+','+nXv+')) end return '+nCat+'('+nBy+') end ';
   pieces.push(decFn);
   pieces.push('local '+nP+'='+expr);
   pieces.push(
