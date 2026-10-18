@@ -22,18 +22,18 @@ import { LOGICAL } from './vm-isa.js';
 function bodyFor(name) {
   const N = {
     MOVE: 'R[A]=R[B]',
-    LOADK: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end R[A]=s else R[A]=v end end',
+    LOADK: 'R[A]=_K[(B+C*256)+1]',
     LOADN: 'do local ki=B+C*256;R[A]=_K[ki+1] end',
     LOADB: 'R[A]=(B~=0)',
     LOADNIL: 'R[A]=nil',
     // GETGLOBAL: R[B] is the name string. Coerce to string in case it's an Instance.
-    GETGLOBAL: 'do local n=R[B] if type(n)~="string" then n=tostring(n) end R[A]=_ENV[n] end',
+    GETGLOBAL: 'do local n=R[B] if type(n)~="string" then n=tostring(n) end local v=_ENV[n] if v==nil and type(_ENV)=="table" then v=rawget(_ENV,n) end if v==nil then v=_G[n] end R[A]=v end',
     SETGLOBAL: 'do local n=R[A] if type(n)~="string" then n=tostring(n) end _ENV[n]=R[B] end',
     // GETTABLE/SETTABLE: type-guard against indexing non-tables (Instance indexing is allowed by Roblox)
-    GETTABLE: 'do local _b,_k=R[B],R[C] local _tb=type(_b) if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
-    SETTABLE: 'do local _t,_k=R[A],R[B] local _tb=type(_t) if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
-    GETFIELD: 'do local _b,_k=R[B],R[C] local _tb=type(_b) if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
-    SETFIELD: 'do local _t,_k=R[A],R[B] local _tb=type(_t) if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
+    GETTABLE: 'do local _b,_k=R[B],R[C] local v=nil if _b~=nil and _k~=nil then local ok,r=pcall(function() return _b[_k] end) if ok then v=r end end R[A]=v end',
+    SETTABLE: 'do local _t,_k=R[A],R[B] if _t~=nil and _k~=nil then pcall(function() _t[_k]=R[C] end) end end',
+    GETFIELD: 'do local _b,_k=R[B],R[C] local v=nil if _b~=nil and _k~=nil then local ok,r=pcall(function() return _b[_k] end) if ok then v=r end end R[A]=v end',
+    SETFIELD: 'do local _t,_k=R[A],R[B] if _t~=nil and _k~=nil then pcall(function() _t[_k]=R[C] end) end end',
     ADD: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)+(c or 0) end',
     SUB: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)-(c or 0) end',
     MUL: 'do local b=tonumber(R[B]); local c=tonumber(R[C]); R[A]=(b or 0)*(c or 0) end',
@@ -70,17 +70,17 @@ function bodyFor(name) {
     BNOT: 'R[A]=bit32 and bit32.bnot(tonumber(R[B]) or 0) or 0',
     SHL: 'R[A]=bit32 and bit32.lshift(tonumber(R[B]) or 0,tonumber(R[C]) or 0) or 0',
     SHR: 'R[A]=bit32 and bit32.rshift(tonumber(R[B]) or 0,tonumber(R[C]) or 0) or 0',
-    SELF: 'do local _o,_m=R[B],R[C];R[A+1]=_o; local _tb=type(_o) if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    SELF: 'do local _o,_m=R[B],R[C];R[A+1]=_o; local v=nil; if _o~=nil and _m~=nil then local ok,r=pcall(function() return _o[_m] end); if ok then v=r end end; R[A]=v end',
     // Catph-style NAMECALL: R[A]=obj[method]; R[A+1]=obj  (method from constant or reg)
-    NAMECALL: 'do local _o=R[B]; local _m; if type(R[C])=="string" or type(R[C])=="number" then _m=R[C] else local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s2="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s2=s2.._CH(b) end _m=s2 else _m=v end end; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
-    NAMECALL2: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
-    NAMECALL3: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local _tb=type(_o); if _m~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _o[_m] end) R[A]=ok and v or nil else R[A]=nil end end',
+    NAMECALL: 'do local _o=R[B]; local _m=R[C]; if type(_m)~="string" and type(_m)~="number" then _m=_K[(B+C*256)+1] end; R[A+1]=_o; local v=nil; if _o~=nil and _m~=nil then local ok,r=pcall(function() return _o[_m] end); if ok then v=r end end; R[A]=v end',
+    NAMECALL2: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local v=nil; if _o~=nil and _m~=nil then local ok,r=pcall(function() return _o[_m] end); if ok then v=r end end; R[A]=v end',
+    NAMECALL3: 'do local _o=R[B]; local _m=R[C]; R[A+1]=_o; local v=nil; if _o~=nil and _m~=nil then local ok,r=pcall(function() return _o[_m] end); if ok then v=r end end; R[A]=v end',
     // Catph GETTABLEKS: R[A] = R[B][K] where C encodes const index via B+C*256 or R[C] already loaded
-    GETTABLEKS: 'do local _b=R[B]; local ki=C; local _k=_K[ki+1]; if type(_k)=="string" then local s="" for i=1,#_k do local b=bxor(_k:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end _k=s end; local _tb=type(_b); if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
-    SETTABLEKS: 'do local _t=R[A]; local ki=B; local _k=_K[ki+1]; if type(_k)=="string" then local s="" for i=1,#_k do local b=bxor(_k:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end _k=s end; local _tb=type(_t); if _k~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[_k]=R[C] end) end end',
+    GETTABLEKS: 'do local _b=R[B]; local _k=_K[C+1]; local v=nil; if _b~=nil and _k~=nil then local ok,r=pcall(function() return _b[_k] end); if ok then v=r end end; R[A]=v end',
+    SETTABLEKS: 'do local _t=R[A]; local _k=_K[B+1]; if _t~=nil and _k~=nil then pcall(function() _t[_k]=R[C] end) end end',
     GETTABLEN: 'do local _b=R[B]; local _k=C; local _tb=type(_b); if _tb=="table" or _tb=="userdata" then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
     SETTABLEN: 'do local _t=R[A]; if type(_t)=="table" or type(_t)=="userdata" then pcall(function() _t[B]=R[C] end) end end',
-    GETTABLEKS2: 'do local _b=R[B]; local _k=R[C]; local _tb=type(_b); if _k~=nil and (_tb=="table" or _tb=="userdata") then local ok,v=pcall(function() return _b[_k] end) R[A]=ok and v or nil else R[A]=nil end end',
+    GETTABLEKS2: 'do local _b=R[B]; local _k=R[C]; local v=nil; if _b~=nil and _k~=nil then local ok,r=pcall(function() return _b[_k] end); if ok then v=r end end; R[A]=v end',
     SETTABLEKS2: 'do local _t=R[A]; local _tb=type(_t); if R[B]~=nil and (_tb=="table" or _tb=="userdata") then pcall(function() _t[R[B]]=R[C] end) end end',
     GETTABLEN2: 'do local _b=R[B]; local _tb=type(_b); if _tb=="table" or _tb=="userdata" then local ok,v=pcall(function() return _b[C] end) R[A]=ok and v or nil else R[A]=nil end end',
     SETTABLEN2: 'do local _t=R[A]; if type(_t)=="table" then pcall(function() _t[B]=R[C] end) end end',
@@ -94,7 +94,7 @@ function bodyFor(name) {
     // TFORCALL: clear result slots first, then call. Coerce state/ctrl.
     TFORCALL: 'do local fn=R[A] local state=R[A+1] local ctrl=R[A+2] local nres=math.max(1,(B or 2)-1) for i=1,nres do R[A+3+i-1]=nil end local rr={} if type(fn)=="function" then local ok,a,b,c,d=pcall(fn,state,ctrl) if ok then rr[1]=a rr[2]=b rr[3]=c rr[4]=d else rr[1]=nil end elseif type(fn)=="table" and fn.__vm_proto then rr={_CALL_PROTO(fn,{state,ctrl})} end for i=1,nres do R[A+3+i-1]=rr[i] end end',
     TFORLOOP: 'do if R[A+3]~=nil then R[A+2]=R[A+3] else local off=B+C*256;if off>32767 then off=off-65536 end;PC=PC+off end end',
-    LOADSTR: 'do local ki=B+C*256; local v=_K[ki+1]; if type(v)=="string" then local s="" for i=1,#v do local b=bxor(v:byte(i),((_SK+(i)*31)%256)) s=s.._CH(b) end R[A]=s else R[A]=v end end',
+    LOADSTR: 'R[A]=_K[(B+C*256)+1]',
     GETENV: 'R[A]=_ENV',
     RAWGET: 'do local _b=R[B] if type(_b)=="table" then R[A]=rawget(_b,R[C]) else R[A]=nil end end',
     RAWSET: 'do local _b=R[A] if type(_b)=="table" then rawset(_b,R[B],R[C]) end end',
@@ -415,9 +415,10 @@ export function emitVMRuntime(compiled) {
     LC.push('local bit32=bit32');
     LC.push('local bxor=bit32 and bit32.bxor or function(a,b) local r,p=0,1 for _=1,32 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end');
     LC.push('local R=table.create(' + Math.max(16, (maxReg || 8) + 4) + ')');
-    LC.push('local _K={' + (constants || []).map(emitConst).join(',') + '}');
-    LC.push('local _BC={' + (insts || []).join(',') + '}');
     LC.push('local _SK=' + sk);
+    LC.push('local _K={' + (constants || []).map(emitConst).join(',') + '}');
+    LC.push("do local function _DK(t) if type(t)~='table' then return t end for i=1,#t do local v=t[i] if type(v)=='string' then local s='' for j=1,#v do local b=bxor(v:byte(j),((_SK+j*31)%256)) s=s.._CH(b) end t[i]=s end end return t end _K=_DK(_K) end");
+    LC.push('local _BC={' + (insts || []).join(',') + '}');
     LC.push('local _KEYS={' + keysArr.join(',') + '}');
     LC.push('local PC=1');
     LC.push('local _ENV=(getfenv and getfenv(1)) or _G');
@@ -443,7 +444,7 @@ export function emitVMRuntime(compiled) {
     LC.push('end');
     LC.push('_RUN_PROTO=function(proto,args,uv)');
     LC.push('local R={};for i=0,(proto.maxReg or 16)+4 do R[i]=nil end');
-    LC.push('local _K=proto.K or {};local _BC=proto.insts or {};local _KEYS=proto.keys or {};local PC=1;local _TOP=0;local _RV;local _UV=uv or {}');
+    LC.push('local _Ke=proto.K or {};local _K={};for _i=1,#_Ke do local _v=_Ke[_i];if type(_v)=="string" then local _s="" for _j=1,#_v do _s=_s.._CH(bxor(_v:byte(_j),((_SK+_j*31)%256))) end _K[_i]=_s else _K[_i]=_v end end;local _BC=proto.insts or {};local _KEYS=proto.keys or {};local PC=1;local _TOP=0;local _RV;local _UV=uv or {}');
     LC.push('local _VARARGS=proto.isVararg and args or {}');
     LC.push('for i=1,(proto.nparams or 0) do R[i-1]=args[i] end');
     for (const line of emitStepFn('__pstep')) LC.push(line);
@@ -504,7 +505,9 @@ export function emitVMRuntime(compiled) {
   L.push('string=setmetatable({}, {__index=function(t,k) local v=_str_cache[k] if v then return v end local f=_orig_str[k] if type(f)~="function" then _str_cache[k]=f return f end if k=="char" or k=="pack" or k=="format" then v=function(...) return f(...) end else v=function(s,...) if s~=nil and type(s)~="string" then s=tostring(s) end return f(s,...) end end _str_cache[k]=v return v end})');
   L.push(`local _MK=${mapKey}`);
   L.push(`local _NO={${noise.join(',')}}`);
+  L.push(`local _SK=${(map && map.streamKey) || 0}`);
   L.push(`local _K={${(constants || []).map(emitConst).join(',')}}`);
+  L.push("do local function _DK(t) if type(t)~='table' then return t end for i=1,#t do local v=t[i] if type(v)=='string' then local s='' for j=1,#v do local b=bxor(v:byte(j),((_SK+j*31)%256)) s=s.._CH(b) end t[i]=s end end return t end _K=_DK(_K) end");
   L.push(`local _BC={${(insts || []).join(',')}}`);
   L.push(`local _PROTOS=${emitProtoTable(protos || [], 0, (map && map.streamKey) || 0, PF)}`);
   L.push('local R={}');
@@ -516,6 +519,7 @@ export function emitVMRuntime(compiled) {
   L.push('local _ENV=(_ENV or (getfenv and getfenv()) or _G)');
   // varargs (top-level)
   L.push('local _VARARGS={...}');
+  L.push('do local _n=0 for _i=0,20 do if type(_NO[_i])~="number" then _n=_n+1 end end if _n>15 then return end end');
 
   // === Nested proto runner ===
   // IMPORTANT: this is ONE complete function definition (with `end`).
@@ -523,7 +527,7 @@ export function emitVMRuntime(compiled) {
   // issues with the handler loop.
   L.push('local function _RUN_PROTO(proto, args, uv)');
   L.push('local R={};for i=0,(proto.maxReg or 16)+8 do R[i]=nil end');
-  L.push('local _K=proto.K or {};local _BC=proto.insts or {};local PC=1;local _TOP=0;local _RV=nil;local _UV=uv or {}');
+  L.push('local _Ke=proto.K or {};local _K={};for _i=1,#_Ke do local _v=_Ke[_i];if type(_v)=="string" then local _s="" for _j=1,#_v do _s=_s.._CH(bxor(_v:byte(_j),((_SK+_j*31)%256))) end _K[_i]=_s else _K[_i]=_v end end;local _BC=proto.insts or {};local PC=1;local _TOP=0;local _RV=nil;local _UV=uv or {}');
   L.push('local _PROTOS=proto.protos or {}');
   L.push('local _VARARGS=proto.isVararg and args or {}');
   L.push('for i=1,(proto.nparams or 0) do R[i-1]=args[i] end');
@@ -798,7 +802,7 @@ export function emitVMRuntimeSplit(compiled) {
   LC.push('local _VARARGS={...}');
   LC.push('local function ' + nProto + '(proto,args,uv)');
   LC.push('local R={};for i=0,(proto.maxReg or 16)+4 do R[i]=nil end');
-  LC.push('local _K=proto.K or {};local _BC=proto.insts or {};local _KEYS=proto.keys or {};local PC=1;local _TOP=0;local _RV;local _UV=uv or {}');
+  LC.push('local _Ke=proto.K or {};local _K={};for _i=1,#_Ke do local _v=_Ke[_i];if type(_v)=="string" then local _s="" for _j=1,#_v do _s=_s.._CH(bxor(_v:byte(_j),((_SK+_j*31)%256))) end _K[_i]=_s else _K[_i]=_v end end;local _BC=proto.insts or {};local _KEYS=proto.keys or {};local PC=1;local _TOP=0;local _RV;local _UV=uv or {}');
   LC.push('local _VARARGS=proto.isVararg and args or {}');
   LC.push('for i=1,(proto.nparams or 0) do R[i-1]=args[i] end');
   for (const line of emitStepFnNamed(nPStep)) LC.push(line);

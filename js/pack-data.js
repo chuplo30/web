@@ -42,17 +42,16 @@ function luaLongWrapSafe(str) {
   return "[" + eq + "[" + str + "]" + eq + "]";
 }
 function chunkLongstring(b94, chunkSize) {
-  const size = chunkSize || 280;
+  // Larger chunks = fewer pieces; avoid deep a..b..c chains (C stack overflow)
+  const size = chunkSize || 1200;
   const parts = [];
   for (let i = 0; i < b94.length; i += size) {
     parts.push(luaLongWrapSafe(b94.slice(i, i + size)));
   }
   if (!parts.length) parts.push(luaLongWrapSafe(""));
   if (parts.length === 1) return parts[0];
-  // table.concat avoids C stack overflow from a..b..c chains
-  // join longstring chunks without table.concat name in output
-  if (parts.length === 1) return parts[0];
-  return "(" + parts.join("..") + ")";
+  // Loop concat — O(n) depth, not O(n) expression nesting
+  return "(function() local _t={" + parts.join(",") + "} local _s=\"\" for _i=1,#_t do _s=_s.._t[_i] end return _s end)()";
 }
 function rn(reuse) {
   if (!rn._n) rn._n = 0;
@@ -253,7 +252,7 @@ export function packVmData(src) {
   pieces.push('local ' + rn(true) + '=' + junkLS());
   pieces.push('local ' + rn(true) + '=' + junkLS());
   const packStr = encode20Bytes(rawBytes, ka, kb);
-  const expr = chunkLongstring(packStr, 120);
+  const expr = chunkLongstring(packStr, 1200);
 
   const nCh=rn(),nCat=rn(),nAb=rn();
   const nOut=rn(),nRaw=rn(),nLen=rn(),nX2=rn(),nHt=rn(),nHx=rn(),nBy=rn(),nH=rn(),nId=rn();
