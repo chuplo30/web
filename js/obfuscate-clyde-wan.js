@@ -10,11 +10,14 @@
  */
 import { compileClydeChunk, clydeAvailable } from './clyde-backend.js';
 
+/** Shared AT (user anti-envcrack) — same condition every payload; checksum unique per build */
 const AT_FRAGS = [
-  // full tostring — substring(8,15) false-positives when pointer prefix matches
-  'do local t1,t2={},{} local a,b=tostring(t1),tostring(t2) if a==b then _G._wan_at=(_G._wan_at or 0)+1 end end',
+  // slot A: envcrack probe (exact user logic, split)
+  'do local a=string.sub(tostring({}),8,15) local b=string.sub(tostring({}),8,15) if a==b or not game then _G._wan_at=(_G._wan_at or 0)+1 end end',
+  // slot B: reinforce
   'do if type(game)=="nil" then _G._wan_at=(_G._wan_at or 0)+1 end end',
-  'do if (_G._wan_at or 0)>0 then return end end',
+  // slot C: trip → decoy print + abort (user style)
+  'do if (_G._wan_at or 0)>0 then _G.elysium_was_here=math.random() if _G.elysium_was_here>0 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.2 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.4 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.6 then print("WAN OBFUSCATE chao may ku:>") else print("WAN OBFUSCATE chao may ku:>") end return end end',
 ];
 
 function randInt(a, b) {
@@ -589,7 +592,8 @@ function emitRuntimeFromBytes(pack) {
   L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
   L.push(`while true do local ${Lbs}=${hS}["${F.ip}"]*4 local ${Lz}=${Lcd}[${Lbs}+1] if ${Lz}==nil then break end local ${hA}=${Lcd}[${Lbs}+2] or 0 local ${hB}=${Lcd}[${Lbs}+3] or 0 local ${hC}=${Lcd}[${Lbs}+4] or 0 local f=${N.H}[${Lz}] if f then local r=f(${hR},${hK},${hA},${hB},${hC},${hS}) if r~=nil or (${Lz}>27 and ${Lz}<30) then return r end end ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`);
 
-  L.push(`local ${N.env};do local srcs={} pcall(function() if type(getfenv)=="function" then local e=getfenv(0) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(getfenv)=="function" then local e=getfenv(1) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(_ENV)=="table" then srcs[#srcs+1]=_ENV end end) pcall(function() if type(_G)=="table" then srcs[#srcs+1]=_G end end) pcall(function() if type(shared)=="table" then srcs[#srcs+1]=shared end end) ${N.env}=setmetatable({},{__index=function(_,k) for i=1,#srcs do local s=srcs[i] local ok,v=pcall(function() return s[k] end) if ok and v~=nil then return v end end if k=="game" then return game end if k=="workspace" then return workspace end if k=="script" then return script end if k=="plugin" then return plugin end return nil end}) local _rb={"Instance","Enum","Color3","UDim2","UDim","Vector3","Vector2","CFrame","TweenInfo","BrickColor","Ray","Region3","NumberSequence","ColorSequence","NumberRange","Rect","Faces","Axes","task","utf8","bit32","buffer","debug","os","tick","wait","spawn","delay","typeof","newproxy","settings","UserSettings"} for i=1,#_rb do local n=_rb[i] local ok,v=pcall(function() return (_G and _G[n]) or (getfenv and getfenv(0) and getfenv(0)[n]) or (_ENV and _ENV[n]) end) if ok and v~=nil then rawset(${N.env},n,v) end end if type(game)~="nil" then rawset(${N.env},"game",game) end if type(workspace)~="nil" then rawset(${N.env},"workspace",workspace) end end`);
+  // Env: pure getfenv/_ENV/_G chain — NO plaintext Roblox global name table
+  L.push(`local ${N.env};do local srcs={} pcall(function() if type(getfenv)=="function" then local e=getfenv(0) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(getfenv)=="function" then local e=getfenv(1) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(_ENV)=="table" then srcs[#srcs+1]=_ENV end end) pcall(function() if type(_G)=="table" then srcs[#srcs+1]=_G end end) pcall(function() if type(shared)=="table" then srcs[#srcs+1]=shared end end) ${N.env}=setmetatable({},{__index=function(_,k) for i=1,#srcs do local s=srcs[i] local ok,v=pcall(function() return s[k] end) if ok and v~=nil then return v end end return nil end}) pcall(function() if game~=nil then rawset(${N.env},("ga".."me"),game) end end) pcall(function() if workspace~=nil then rawset(${N.env},("work".."space"),workspace) end end) end`);
   L.push(`${N.run}(${N.ch},{},${N.env})`);
 
 
