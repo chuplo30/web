@@ -658,14 +658,26 @@ export function obfuscateClydeWan(source, opts = {}) {
   const log = debug ? (m) => console.log('[WAN-Clyde] ' + m) : () => {};
 
   // 1) binary bytecode
-  // Light SM (source CF flatten) — ON by default after signed-JMP fix; opts.noSM to disable
+  // Light SM: auto only for small scripts (<=8 units). Large GUI → skip (prevents hang).
+  // Force ON: opts.sm / opts.cfLight. Force OFF: opts.noSM.
   let srcIn = String(source || '');
-  if (!(opts && opts.noSM)) {
+  const forceSM = !!(opts && (opts.sm || opts.cfLight));
+  const forceNoSM = !!(opts && opts.noSM);
+  if (!forceNoSM) {
     try {
-      const sm = toStateMachineLight(srcIn);
-      if (sm && sm.length > srcIn.length * 0.5) {
-        srcIn = sm;
-        log('SM light applied ' + srcIn.length);
+      let nUnits = 99;
+      try {
+        const u = splitTopLevelStatements(srcIn);
+        nUnits = (u && u.length) || 99;
+      } catch (_) {}
+      if (forceSM || nUnits <= 8) {
+        const sm = toStateMachineLight(srcIn);
+        if (sm && sm.length > srcIn.length * 0.5) {
+          srcIn = sm;
+          log('SM light applied units=' + nUnits + ' len=' + srcIn.length);
+        }
+      } else {
+        log('SM skip large script units=' + nUnits);
       }
     } catch (e) {
       log('SM skip: ' + (e && e.message));
@@ -673,7 +685,10 @@ export function obfuscateClydeWan(source, opts = {}) {
   }
 
   log('Clyde regCompile...');
-  const cr = compileClydeChunk(srcIn, {});
+  const cr = compileClydeChunk(srcIn, {
+    noCF: !!(opts && opts.noCF),
+    seed: opts && opts.seed,
+  });
   if (!cr || !cr.ok) throw new Error('Clyde compile failed: ' + (cr && cr.error));
   const ser = serializeChunk(cr.chunk);
   const bin = ser.bytes;
