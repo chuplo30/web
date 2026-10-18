@@ -703,7 +703,7 @@ export function obfuscateClydeWan(source, opts = {}) {
   return {
     code,
     meta: {
-      mode: 'bytecode-pack→inline-runtime→setmetatable+50kb-junk',
+      mode: 'clyde-wan', backend: 'clyde-cf-max',
       loadstring: false,
       bytes: bin.length,
       keys: pack.keyCount,

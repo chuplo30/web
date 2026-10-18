@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { AT_STAGE_ENVCRACK, AT_STAGE_STRONG, AT_STAGE_SOFT_HOOK } from './at-stages.js';
 import { compileToVM } from './vm-compiler.js';
 import { catphAvailable, runCatphVM } from './catph-backend.js';
+import obfuscateClydeWan, { obfuscateClydeWan as _clydeWan } from './obfuscate-clyde-wan.js';
 
 function rv() {
   // single-letter names only (a-z A-Z), cycle with rare digit suffix avoided
@@ -1146,6 +1147,29 @@ export function obfuscate(input, opts = {}) {
   const doRename = !(opts && opts.noRename);
   // default ON: Hercules VM, no loadstring
   const useHercules = !(opts && opts.noHercules);
+
+  // === PRIMARY: Clyde-WAN (regCompile + CF + SM + signed JMP + pack + setmetatable) ===
+  // Skip only if opts.legacy / opts.useCatph / opts.noClyde explicitly set
+  if (!(opts && (opts.legacy || opts.useCatph || opts.noClyde))) {
+    try {
+      const r = obfuscateClydeWan(input, {
+        noAT: !wantAT,
+        noSM: !!(opts && opts.noSM),
+        debug,
+        seed: opts && opts.seed,
+      });
+      if (r && r.code && r.code.length > 100) {
+        log('Clyde-WAN primary ok ' + r.code.length);
+        return {
+          code: r.code,
+          meta: Object.assign({}, r.meta || {}, { mode: 'clyde-wan', backend: 'clyde-cf-max' }),
+        };
+      }
+      log('Clyde-WAN empty, fallback legacy');
+    } catch (e) {
+      log('Clyde-WAN err: ' + (e && e.message) + ' — fallback legacy');
+    }
+  }
 
   // Reset single-char pool each build
   rv._pool = null; rv._i = 0;
