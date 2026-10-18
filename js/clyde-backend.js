@@ -5,6 +5,8 @@
 import { lex } from '../clyde/lexer/Lexer.js';
 import { parse } from '../clyde/parser/Parser.js';
 import { obfuscate as clydeObfuscate } from '../clyde/obfuscator/Obfuscator.js';
+import { scrambleControlFlow } from '../clyde/obfuscator/ControlFlowScrambler.js';
+import { encodeStrings } from '../clyde/obfuscator/StringEncoder.js';
 import { regCompile } from '../clyde/vm/RegCompiler.js';
 import { generateRegVM } from '../clyde/vm/reg-vm-gen.js';
 
@@ -34,9 +36,20 @@ export function compileClydeChunk(source, opts = {}) {
       return { ok: false, error: errors.map((e) => e.message || String(e)).join('; ') };
     }
     const ast = parse(tokens);
-    const ob = clydeObfuscate(ast, { renameLocals: true, preserveGlobals: true });
+    // Minify-rename
+    let ob = clydeObfuscate(ast, { renameLocals: true, preserveGlobals: true, seed: opts.seed || (Date.now() % 2147483647) });
+    // Control-flow Clyde full (opaque predicates on if/while/repeat)
+    if (!(opts && opts.noCF)) {
+      ob = scrambleControlFlow(ob, { enabled: true, seed: opts.seed || (Date.now() % 2147483647) });
+    }
+    // String encode OFF by default (decoder fragile under custom VM); enable opts.strEnc
+    if (opts && opts.strEnc) {
+      try {
+        ob = encodeStrings(ob, { enabled: true, key: ((opts.seed || Date.now()) & 0xff) || 0x5A });
+      } catch (_) {}
+    }
     const chunk = regCompile(ob);
-    return { ok: true, chunk: serChunk(chunk), meta: { insts: serChunk(chunk).nInstructions, backend: 'clyde-bytecode-only' } };
+    return { ok: true, chunk: serChunk(chunk), meta: { insts: serChunk(chunk).nInstructions, backend: 'clyde-cf-max' } };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }

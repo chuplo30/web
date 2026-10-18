@@ -206,12 +206,18 @@ export function packVmData(src) {
   pieces.push('local ' + tName + '={}');
   for (let _j = 0; _j < 6; _j++) pieces.push('local ' + rn(true) + '=' + junkLS());
   // 4 fake key tables — empty first, filled with same-style writes as real keys
+  // 6–8 fake key/vmap tables — SAME shape as real (20 slots), random names, filled like real keys
+  // Deobfuscator chasing "the" vmap will hit fakes and decrypt garbage
   const fakeSlots = [
     { name: nC, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
     { name: nD, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
     { name: nE, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
     { name: nF, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
+    { name: nG, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
+    { name: nHH, vals: Array.from({ length: 20 }, () => randInt(0, 255)) },
   ];
+  // also bind fake rebuild tables that LOOK like nA/nB (real ka/kb views)
+  const nFakeA = rn(), nFakeB = rn();
   for (const f of fakeSlots) pieces.push('local ' + f.name + '={}');
   let fi = 0;
   for (let oi = 0; oi < order.length; oi++) {
@@ -247,6 +253,8 @@ export function packVmData(src) {
   }
   // real rebuild — SAME syntax as fakes (literal table of 20 refs)
   pieces.push('local ' + nA + '={' + Array.from({ length: 20 }, (_, i) => tName + '[' + (i + 1) + ']').join(',') + '}');
+  pieces.push('local ' + nFakeA + '={' + Array.from({ length: 20 }, (_, i) => nC + '[' + (i + 1) + ']').join(',') + '}');
+  pieces.push('local ' + nFakeB + '={' + Array.from({ length: 20 }, (_, i) => nD + '[' + (i + 1) + ']').join(',') + '}');
   pieces.push('local ' + nB + '={' + Array.from({ length: 20 }, (_, i) => tName + '[' + (i + 21) + ']').join(',') + '}');
   // dead branches swap real <-> fake (never taken) — all names look equal
   pieces.push('if false then ' + nA + '=' + nC + ' ' + nB + '=' + nD + ' end');
