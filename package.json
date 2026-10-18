@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "flask": "python3 app.py",
+    "health": "node -e \"fetch(\"http://127.0.0.1:\"+(process.env.PORT||3000)+\"/api/health\").then(r=>r.json()).then(console.log)\""
   },
   "engines": {
     "node": ">=18"
