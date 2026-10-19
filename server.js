@@ -25,7 +25,9 @@ function buildOpts(body) {
   delete o.noPack;
   delete o.useCatph; // Catph emit breaks loadstring / wrong shell
   o.noCatph = true;
-  if (o.noAT === undefined && o.at === false) o.noAT = true;
+  // AT + anti-hook always on unless client sets noAT:true / at:false
+  if (o.at === false || o.noAT === true) o.noAT = true;
+  else o.noAT = false;
   if (o.debug === undefined) o.debug = false;
   return o;
 }

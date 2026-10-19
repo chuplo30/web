@@ -1,12 +1,15 @@
 /**
- * Pipeline (user order):
- *   source → Clyde regCompile (rename+CF max) → binary bytecode + anti-hook(debug.info)
- *   → Runtime (buffer.fromstring → parser → VM dispatch table)
- *   → WAN pack bytecode: xor20→hex→xor20→base94 + 40–80 keys + fake vmaps
- *   → setmetatable surface (decoy + anti-deobf + AT + 50 junk)
- *   → VM run (NO loadstring)
- *
- * All random names 1-char; no plaintext "op==N"; dispatch via table.
+ * Pipeline:
+ *   source
+ *     → validateLuau (syntax)
+ *     → SM light (script nhỏ)
+ *     → AT layer2 exact prepend (chạy TRƯỚC payload trong bytecode)
+ *     → Clyde renameLocals + scrambleControlFlow + regCompile
+ *     → serialize binary (magic random, opMap, varint, checksum)
+ *     → WAN pack DATA: xor20→hex→xor20→base94 + keys/vmap giả
+ *     → Runtime: SM decoder + anti-hook(debug.info) + checksum + parser + VM table
+ *     → setmetatable surface (AT layer1 tách + decoy + 50KB junk)
+ *   NO loadstring. AT exact user anti-envcrack.
  */
 import { compileClydeChunk, clydeAvailable, validateLuau } from './clyde-backend.js';
 
@@ -510,90 +513,116 @@ function emitRuntimeFromBytes(pack) {
     L.push(`${fk5}[${i + 1}]=${deepKeyExpr(fakeKeyA[i])}`);
     L.push(`${fk6}[${i + 1}]=${deepKeyExpr(fakeKeyB[i])}`);
   }
-  // === POLYMORPHIC DECODER (state-machine + fn table — real path not linear d1→d2→d3) ===
-  const st0 = randInt(1000, 9000), st1 = randInt(1000, 9000), st2 = randInt(1000, 9000);
-  const st3 = randInt(1000, 9000), st4 = randInt(1000, 9000), st5 = randInt(1000, 9000);
-  const st6 = randInt(1000, 9000), st7 = randInt(1000, 9000), stDone = randInt(1000, 9000);
-  const stJ1 = randInt(1000, 9000), stJ2 = randInt(1000, 9000), stJ3 = randInt(1000, 9000);
-  const stJ4 = randInt(1000, 9000), stJ5 = randInt(1000, 9000), stJ6 = randInt(1000, 9000);
-  const _sts = [st0,st1,st2,st3,st4,st5,st6,st7,stDone,stJ1,stJ2,stJ3,stJ4,stJ5,stJ6];
-  for (let i = 0; i < _sts.length; i++) {
-    for (let j = i + 1; j < _sts.length; j++) {
-      if (_sts[i] === _sts[j]) _sts[j] = _sts[i] + 1 + j * 7;
-    }
-  }
-  const [S0,S1,S2,S3,S4,S5,S6,S7,SD,SJ1,SJ2,SJ3,SJ4,SJ5,SJ6] = _sts;
+  // === MEGA POLYMORPHIC DECODER: 12+ fakes, noise tables, SM chaos — real path buried ===
+  const nStates = 22;
+  const states = [];
+  for (let i = 0; i < nStates; i++) states.push(randInt(1000, 9999));
+  for (let i = 0; i < states.length; i++)
+    for (let j = i + 1; j < states.length; j++)
+      if (states[i] === states[j]) states[j] = states[i] + 11 + j * 3;
+  const [S0,S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,SD] = states;
 
-  // real + fake primitive ops registered in table under random numeric keys
-  const kB94 = randInt(50, 900), kHex = randInt(50, 900), kRaw = randInt(50, 900);
-  const kFake1 = randInt(50, 900), kFake2 = randInt(50, 900), kFake3 = randInt(50, 900);
-  const kFake4 = randInt(50, 900), kFake5 = randInt(50, 900), kFake6 = randInt(50, 900);
-  const kFake7 = randInt(50, 900), kFake8 = randInt(50, 900);
-  const kId = randInt(50, 900), kJunk = randInt(50, 900), kJunk2 = randInt(50, 900);
-  const _ks = [kB94,kHex,kRaw,kFake1,kFake2,kFake3,kFake4,kFake5,kFake6,kFake7,kFake8,kId,kJunk,kJunk2];
-  for (let i = 0; i < _ks.length; i++) {
-    for (let j = i + 1; j < _ks.length; j++) if (_ks[i] === _ks[j]) _ks[j] += 17 + j * 3;
-  }
-  const [KB94,KHEX,KRAW,KF1,KF2,KF3,KF4,KF5,KF6,KF7,KF8,KID,KJ,KJ2] = _ks;
+  const nKeys = 20;
+  const keys = [];
+  for (let i = 0; i < nKeys; i++) keys.push(randInt(40, 900));
+  for (let i = 0; i < keys.length; i++)
+    for (let j = i + 1; j < keys.length; j++)
+      if (keys[i] === keys[j]) keys[j] = keys[i] + 13 + j * 5;
+  const [KB94,KHEX,KRAW,KF1,KF2,KF3,KF4,KF5,KF6,KF7,KF8,KF9,KF10,KF11,KF12,KID,KJ,KJ2,KJ3,KJ4] = keys;
 
-  const DT = rn(); // decode table
+  const DT = rn();
   L.push(`local ${DT}={}`);
-  // REAL b94
+  // REAL ops
   L.push(`${DT}[${KB94}]=function(s) local A=${deepKeyExpr(_alpha)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
-  // FAKE b94
-  L.push(`${DT}[${KF1}]=function(s) local A=${deepKeyExpr((_alpha+11)%45+30)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
-  // REAL xor→hex
   L.push(`${DT}[${KHEX}]=function(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${N.kb}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
-  // FAKE xor→hex
-  L.push(`${DT}[${KF2}]=function(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${fk6}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
-  // REAL hex→raw
   L.push(`${DT}[${KRAW}]=function(hex) local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${N.ka}[((idx-1)%20)+1] or 0) end return raw end`);
-  // FAKE hex→raw
+  // FAKE twins (same shape, wrong alpha/key/radix)
+  L.push(`${DT}[${KF1}]=function(s) local A=${deepKeyExpr((_alpha+11)%45+30)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
+  L.push(`${DT}[${KF2}]=function(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${fk6}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
   L.push(`${DT}[${KF3}]=function(hex) local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${fk5}[((idx-1)%20)+1] or 0) end return raw end`);
-  // identity + junk
-  L.push(`${DT}[${KID}]=function(x) return x end`);
-  L.push(`${DT}[${KJ}]=function(x) local z=0 for i=1,3 do z=(z*3+1)%97 end return x end`);
-  L.push(`${DT}[${KJ2}]=function(x) local z=1 for i=1,4 do z=(z*5+3)%91 end return x end`);
-  // extra fakes — same shape as real, wrong constants / keys
   L.push(`${DT}[${KF4}]=function(s) local A=${deepKeyExpr((_alpha+3)%40+33)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*93 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
   L.push(`${DT}[${KF5}]=function(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${N.fc}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
   L.push(`${DT}[${KF6}]=function(hex) local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${N.fd}[((idx-1)%20)+1] or 0) end return raw end`);
   L.push(`${DT}[${KF7}]=function(s) local t={} for i=1,#s do t[i]=(s:byte(i) or 0) end return t end`);
   L.push(`${DT}[${KF8}]=function(x) if type(x)=="table" then local o={} for i=1,#x do o[i]=${N.bx}(x[i] or 0,${deepKeyExpr(randInt(1,255))}) end return o end return x end`);
+  L.push(`${DT}[${KF9}]=function(s) local A=${deepKeyExpr((_alpha+19)%50+30)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*95 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
+  L.push(`${DT}[${KF10}]=function(out) local x2len=${pack.x2len} local o={} for i=1,x2len do o[i]=${N.bx}(out[i] or 0,${N.fe}[((i-1)%20)+1] or 0) end return o end`);
+  L.push(`${DT}[${KF11}]=function(x) local z=0 for i=1,5 do z=(z*7+3)%89 end if type(x)=="string" then return x end if type(x)=="table" then return x end return x end`);
+  L.push(`${DT}[${KF12}]=function(hex) local raw={} for i=1,#hex,2 do raw[((i-1)/2)+1]=(tonumber(hex:sub(i,i+1),16) or 0) end return raw end`);
+  L.push(`${DT}[${KID}]=function(x) return x end`);
+  L.push(`${DT}[${KJ}]=function(x) local z=0 for i=1,3 do z=(z*3+1)%97 end return x end`);
+  L.push(`${DT}[${KJ2}]=function(x) local z=1 for i=1,4 do z=(z*5+3)%91 end return x end`);
+  L.push(`${DT}[${KJ3}]=function(x) local z=2 for i=1,3 do z=(z*9+1)%83 end return x end`);
+  L.push(`${DT}[${KJ4}]=function(x) if type(x)~="table" then return x end local o={} for i=1,#x do o[i]=x[i] end return o end`);
 
-  // scatter many aliases (real + fake mixed) — hard to spot which slot is live
+  // scatter aliases — all look live
   L.push(`local ${N.d1}=${DT}[${KB94}] local ${N.d2}=${DT}[${KHEX}] local ${N.d3}=${DT}[${KRAW}]`);
   L.push(`local ${fk1}=${DT}[${KF1}] local ${fk3}=${DT}[${KF2}] local ${fk4}=${DT}[${KF3}]`);
   L.push(`local ${fk2}=${DT}[${KJ}] local ${fk7}=${DT}[${KID}] local ${fk8}=${DT}[${KF4}]`);
-  const a1=rn(),a2=rn(),a3=rn(),a4=rn(),a5=rn(),a6=rn();
-  L.push(`local ${a1}=${DT}[${KF5}] local ${a2}=${DT}[${KF6}] local ${a3}=${DT}[${KF7}]`);
-  L.push(`local ${a4}=${DT}[${KF8}] local ${a5}=${DT}[${KJ2}] local ${a6}=${DT}[${KF1}]`);
-  L.push(`if false then local _=${a1}(${N.p}) local __=${a2}(_) local ___=${a3}(${N.p}) local ____=${a4}(__) local _____=${a5}(${N.p}) end`);
+  const al = [];
+  for (let i = 0; i < 10; i++) al.push(rn());
+  L.push(`local ${al[0]}=${DT}[${KF5}] local ${al[1]}=${DT}[${KF6}] local ${al[2]}=${DT}[${KF7}]`);
+  L.push(`local ${al[3]}=${DT}[${KF8}] local ${al[4]}=${DT}[${KF9}] local ${al[5]}=${DT}[${KF10}]`);
+  L.push(`local ${al[6]}=${DT}[${KF11}] local ${al[7]}=${DT}[${KF12}] local ${al[8]}=${DT}[${KJ3}] local ${al[9]}=${DT}[${KJ4}]`);
+  L.push(`if false then local _=${al[0]}(${N.p}) local __=${al[1]}(_) local ___=${al[2]}(${N.p}) local ____=${al[3]}(__) local _____=${al[4]}(${N.p}) local ______=${al[5]}(_____) end`);
 
-  // state-machine driver — order of states + which table key is NOT obvious from linear read
+  // noise tables
+  const noiseT = rn(), noiseK = rn(), noiseV = rn();
+  L.push(`local ${noiseT}={} local ${noiseK}={} local ${noiseV}={}`);
+  for (let i = 0; i < 28; i++) {
+    L.push(`${noiseT}[${randInt(10,999)}]=function(x) local z=${randInt(1,90)} for _=1,${randInt(2,5)} do z=(z*${randInt(2,9)}+${randInt(1,7)})%97 end return x end`);
+  }
+  for (let i = 0; i < 16; i++) {
+    L.push(`${noiseK}[${i+1}]=${deepKeyExpr(randInt(0,255))}`);
+  }
+  for (let i = 0; i < 10; i++) {
+    L.push(`${noiseV}[${randInt(1,500)}]=${deepKeyExpr(randInt(0,255))}`);
+  }
+  L.push(`if false then for i=1,#${noiseK} do ${noiseK}[i]=${N.bx}(${noiseK}[i] or 0,${deepKeyExpr(randInt(1,200))}) end end`);
+  L.push(`if (0>1) then for k,v in pairs(${noiseV}) do ${noiseV}[k]=${N.bx}(v or 0,1) end end`);
+
   const acc = rn(), stv = rn();
   L.push(`local ${acc}, ${stv}=nil,${S0}`);
   L.push(`while ${stv} do`);
-  L.push(`if ${stv}==${S0} then local _j=0 for _=1,2 do _j=(_j*3+1)%97 end ${stv}=${SJ1}`);
-  L.push(`elseif ${stv}==${SJ1} then ${acc}=${DT}[${KJ}](${N.p}) ${stv}=${SJ4}`);
-  L.push(`elseif ${stv}==${SJ4} then local _=${DT}[${KF4}](${N.p}) if (2<1) then ${acc}=_ end ${stv}=${S1}`);
-  L.push(`elseif ${stv}==${S1} then ${acc}=${DT}[${KB94}](${N.p}) ${stv}=${S2}`);
-  L.push(`elseif ${stv}==${S2} then local _=${DT}[${KF1}](${N.p}) if (1<0) then ${acc}=_ end ${stv}=${SJ2}`);
-  L.push(`elseif ${stv}==${SJ2} then ${acc}=${DT}[${KID}](${acc}) ${stv}=${SJ5}`);
-  L.push(`elseif ${stv}==${SJ5} then local _=${DT}[${KF7}](${N.p}) if false then ${acc}=_ end ${stv}=${S3}`);
-  L.push(`elseif ${stv}==${S3} then ${acc}=${DT}[${KHEX}](${acc}) ${stv}=${S4}`);
-  L.push(`elseif ${stv}==${S4} then if false then ${acc}=${DT}[${KF2}](${acc}) end ${stv}=${SJ3}`);
-  L.push(`elseif ${stv}==${SJ3} then local z=0 for _=1,2 do z=(z+1)%9 end ${stv}=${SJ6}`);
-  L.push(`elseif ${stv}==${SJ6} then local _=${DT}[${KF5}](${acc}) if (0>1) then ${acc}=_ end ${stv}=${S5}`);
-  L.push(`elseif ${stv}==${S5} then ${acc}=${DT}[${KRAW}](${acc}) ${stv}=${S6}`);
-  L.push(`elseif ${stv}==${S6} then if (0>1) then ${acc}=${DT}[${KF3}](${acc}) end ${stv}=${S7}`);
-  L.push(`elseif ${stv}==${S7} then if false then ${acc}=${DT}[${KF6}](${acc}) end ${acc}=${DT}[${KID}](${acc}) ${stv}=${SD}`);
+  // chaos states — real path: S0→junk→S1(KB94)→junk→S3(KHEX)→junk→S5(KRAW)→SD
+  L.push(`if ${stv}==${S0} then local _j=0 for _=1,3 do _j=(_j*3+1)%97 end ${stv}=${S8}`);
+  L.push(`elseif ${stv}==${S8} then ${acc}=${DT}[${KJ}](${N.p}) local _z=0 for _=1,2 do _z=(_z+1)%11 end ${stv}=${S9}`);
+  L.push(`elseif ${stv}==${S9} then local _=${DT}[${KF4}](${N.p}) if (2<1) then ${acc}=_ end local __=${DT}[${KF9}](${N.p}) if false then ${acc}=__ end ${stv}=${S1}`);
+  L.push(`elseif ${stv}==${S1} then ${acc}=${DT}[${KB94}](${N.p}) ${stv}=${S10}`);
+  L.push(`elseif ${stv}==${S10} then local _=${DT}[${KF1}](${N.p}) if (1<0) then ${acc}=_ end local __=${DT}[${KF7}](${N.p}) if (3>9) then ${acc}=__ end ${stv}=${S11}`);
+  L.push(`elseif ${stv}==${S11} then ${acc}=${DT}[${KID}](${acc}) ${acc}=${DT}[${KJ3}](${acc}) ${stv}=${S12}`);
+  L.push(`elseif ${stv}==${S12} then local _=${DT}[${KF11}](${N.p}) if false then ${acc}=_ end local z=1 for _=1,2 do z=(z*5+3)%91 end ${stv}=${S2}`);
+  L.push(`elseif ${stv}==${S2} then ${acc}=${DT}[${KJ2}](${acc}) ${stv}=${S3}`);
+  L.push(`elseif ${stv}==${S3} then ${acc}=${DT}[${KHEX}](${acc}) ${stv}=${S13}`);
+  L.push(`elseif ${stv}==${S13} then if false then ${acc}=${DT}[${KF2}](${acc}) end if (0>2) then ${acc}=${DT}[${KF5}](${acc}) end ${stv}=${S14}`);
+  L.push(`elseif ${stv}==${S14} then local z=0 for _=1,3 do z=(z+1)%9 end local _=${DT}[${KF10}](${acc}) if (1>5) then ${acc}=_ end ${stv}=${S15}`);
+  L.push(`elseif ${stv}==${S15} then ${acc}=${DT}[${KJ4}](${acc}) ${stv}=${S4}`);
+  L.push(`elseif ${stv}==${S4} then local _=${DT}[${KF12}](${acc}) if false then ${acc}=_ end ${stv}=${S5}`);
+  L.push(`elseif ${stv}==${S5} then ${acc}=${DT}[${KRAW}](${acc}) ${stv}=${S16}`);
+  L.push(`elseif ${stv}==${S16} then if (0>1) then ${acc}=${DT}[${KF3}](${acc}) end if false then ${acc}=${DT}[${KF6}](${acc}) end ${stv}=${S17}`);
+  L.push(`elseif ${stv}==${S17} then ${acc}=${DT}[${KID}](${acc}) ${acc}=${DT}[${KJ2}](${acc}) ${stv}=${S18}`);
+  L.push(`elseif ${stv}==${S18} then local _q=0 for _=1,2 do _q=(_q*3+1)%97 end ${stv}=${S19}`);
+  L.push(`elseif ${stv}==${S19} then if false then ${acc}=${DT}[${KF8}](${acc}) end ${stv}=${S20}`);
+  L.push(`elseif ${stv}==${S20} then ${acc}=${DT}[${KJ4}](${acc}) ${stv}=${SD}`);
   L.push(`elseif ${stv}==${SD} then break`);
-  L.push(`else break end end`);
+  L.push(`elseif ${stv}==${S6} then ${acc}=${DT}[${KF1}](${N.p}) ${stv}=${SD}`);
+  L.push(`elseif ${stv}==${S7} then ${acc}=${DT}[${KF9}](${N.p}) ${stv}=${SD}`);
+  L.push(`else local _q=0 for _=1,2 do _q=(_q*3+1)%97 end break end end`);
   L.push(`local ${N.bytes}=${acc}`);
 
-  // Clyde-style anti-hook: debug.info / getinfo — names via alphabet, no plaintext
-  L.push(`do local _dn=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_dn] or nil end) if type(_d)=="table" and type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end end`);
+  // post-decode identity chaos (looks like more crypto stages)
+  const post1 = rn(), post2 = rn(), post3 = rn();
+  L.push(`local function ${post1}(t) if type(t)~="table" then return t end local o={} local k=${deepKeyExpr(randInt(1,255))} for i=1,#t do o[i]=${N.bx}(${N.bx}(t[i] or 0,k),k) end return o end`);
+  L.push(`local function ${post2}(t) if type(t)~="table" then return t end local n=#t local o={} for i=1,n do o[i]=t[i] end for i=1,2 do local z=0 for j=1,3 do z=(z*3+1)%97 end end return o end`);
+  L.push(`local function ${post3}(t) local z=${deepKeyExpr(randInt(1,50))} for _=1,2 do z=(z*5+1)%91 end return t end`);
+  L.push(`if false then ${N.bytes}=${post1}(${N.bytes}) end`);
+  L.push(`${N.bytes}=${post3}(${post2}(${post1}(${N.bytes})))`);
+  // dead fake re-decode path
+  L.push(`if (1<0) then local _a=${DT}[${KF9}](${N.p}) local _b=${DT}[${KF10}](_a) local _c=${DT}[${KF12}](_b) ${N.bytes}=_c end`);
+
+  // Clyde-style anti-hook: debug.info/getinfo (opaque names) + clear sethook
+  // Trip only if pcall is clearly not C — never abort solely because print/tostring are wrapped (executors)
+  L.push(`do local _dn=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _in=${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _gi=${N.cx}(103)..${N.cx}(101)..${N.cx}(116)..${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_dn] or nil end) if type(_d)~="table" then _ok,_d=pcall(function() return rawget(getfenv and getfenv(0) or {},_dn) end) end if type(_d)=="table" then if type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end local _inf=_d[_in] or _d[_gi] if type(_inf)=="function" then local function _isC(fn) local ok,r=pcall(_inf,fn,"s") if not ok then ok,r=pcall(_inf,fn,"S") end if ok and type(r)=="string" then return r==${N.cx}(91)..${N.cx}(67)..${N.cx}(93) or (r:sub(1,3)==${N.cx}(91)..${N.cx}(67)..${N.cx}(93)) end if ok and type(r)=="table" and r.what then return r.what==${N.cx}(67) end return true end if type(pcall)=="function" and not _isC(pcall) then for i=1,#${N.bytes} do ${N.bytes}[i]=${N.bx}(${N.bytes}[i] or 0,${deepKeyExpr(randInt(1,200))}) end return end end end end`);
 
 
   // buffer.fromstring
@@ -643,9 +672,8 @@ function emitRuntimeFromBytes(pack) {
 
   L.push(`local ${N.ch}=${N.proto}()`);
   // checksum: trailer XOR magic (layout not obvious plaintext adler)
-  // Multi-point integrity: primary adler trailer + secondary odd-byte adler (tamper → abort)
-  const midExp = (pack.mid != null ? (pack.mid >>> 0) : 0);
-  L.push(`do local b=${N.bytes} local n=#b if n<12 then return end local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local m0,m1,m2,m3=b[1] or 0,b[2] or 0,b[3] or 0,b[4] or 0 local exp=(${N.bx}(b[n-3] or 0,m0)*16777216+${N.bx}(b[n-2] or 0,m1)*65536+${N.bx}(b[n-1] or 0,m2)*256+${N.bx}(b[n] or 0,m3))%4294967296 if got~=exp then return end local s1,s2=3,7 for i=5,n-4 do if i%2==0 then local v=b[i] or 0 s1=(s1+v)%65521 s2=(s2+s1)%65521 end end local h=(s2*65536+s1)%4294967296 local want=(${deepKeyExpr(midExp & 255)})+(${deepKeyExpr((midExp>>>8)&255)})*256+(${deepKeyExpr((midExp>>>16)&255)})*65536+(${deepKeyExpr((midExp>>>24)&255)})*16777216 if h~=want then return end end`);
+  // Integrity: adler trailer XOR magic — any byte edit → abort (no secondary that can false-positive)
+  L.push(`do local b=${N.bytes} local n=#b if n<12 then return end local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local m0,m1,m2,m3=b[1] or 0,b[2] or 0,b[3] or 0,b[4] or 0 local exp=(${N.bx}(b[n-3] or 0,m0)*16777216+${N.bx}(b[n-2] or 0,m1)*65536+${N.bx}(b[n-1] or 0,m2)*256+${N.bx}(b[n] or 0,m3))%4294967296 if got~=exp then return end end`);
 
   L.push(`local ${N.un}=table.unpack or unpack`);
   L.push(`local function ${N.RK}(${hR},${hK},x) if x>=256 then return ${hK}[x-255] end return ${hR}[x+1] end`);
@@ -679,7 +707,7 @@ function emitRuntimeFromBytes(pack) {
     25: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (not ${hR}[${hA}+1])==(${hC}~=0) then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
     26: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local v=${hR}[${hB}+1] ${hR}[${hA}+1]=v if (not v)==(${hC}~=0) then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
     27: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end if narg<0 then narg=0 end local nret=${hC} local fn=${hR}[${hA}+1] if fn==nil then if nret==0 then ${hR}[${hA}+1]=nil elseif nret>1 then for i=1,nret-1 do ${hR}[${hA}+i]=nil end end else local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end local ok,a1,a2,a3,a4,a5,a6,a7,a8=pcall(fn,${N.un}(args,1,narg)) if not ok then if nret==0 then ${hR}[${hA}+1]=nil elseif nret>1 then for i=1,nret-1 do ${hR}[${hA}+i]=nil end end else local res={a1,a2,a3,a4,a5,a6,a7,a8} if nret==0 then for i=1,#res do ${hR}[${hA}+i]=res[i] end ${hS}["${F.top}"]=${hA}+#res elseif nret==1 then else for i=1,nret-1 do ${hR}[${hA}+i]=res[i] end end end end end`,
-    28: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end local fn=${hR}[${hA}+1] local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end if type(fn)=="function" then if narg>0 then return fn(${N.un}(args,1,narg)) else return fn() end else return end end`,
+    28: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end local fn=${hR}[${hA}+1] local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end if type(fn)~="function" then error("wan",0) end if narg>0 then return fn(${N.un}(args,1,narg)) else return fn() end end`,
     29: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local nval=${hB} if nval==0 then nval=math.max(0,${hS}["${F.top}"]-${hA}+1) elseif nval>=1 then nval=nval-1 end if nval<=0 then return end return ${N.un}(${hR},${hA}+1,${hA}+nval) end`,
     34: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local pr=${hS}["${F.P}"][${hB}+1] local uvs={} if pr then local ups=pr["${F.ups}"] or {} for i=1,#ups do local u=ups[i] if type(u)=="table" then if (u[1] or 0)~=0 then uvs[i]={c=1,v=${hR}[(u[2] or 0)+1]} else local pu=(${hS}["${F.uv}"] or {})[((u[2] or 0)+1)] if type(pu)=="table" and pu.c then uvs[i]={c=1,v=pu.v} else uvs[i]=pu end end else uvs[i]=(${hS}["${F.uv}"] or {})[i] end end ${hR}[${hA}+1]=function(...) return ${N.run}(pr,uvs,${hS}["${F.env}"],...) end else ${hR}[${hA}+1]=function() end end end`,
     36: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local obj=${hR}[${hB}+1] ${hR}[${hA}+2]=obj local k=${N.RK}(${hR},${hK},${hC}) if obj==nil or k==nil then ${hR}[${hA}+1]=nil else local ok,v=pcall(function() return obj[k] end) ${hR}[${hA}+1]=ok and v or nil end end`,
@@ -713,8 +741,20 @@ function emitRuntimeFromBytes(pack) {
   L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
   L.push(`while true do local ${Lbs}=${hS}["${F.ip}"]*4 local ${Lz}=${Lcd}[${Lbs}+1] if ${Lz}==nil then break end local ${hA}=${Lcd}[${Lbs}+2] or 0 local ${hB}=${Lcd}[${Lbs}+3] or 0 local ${hC}=${Lcd}[${Lbs}+4] or 0 local f=${N.H}[${Lz}] if f then local r=f(${hR},${hK},${hA},${hB},${hC},${hS}) if r~=nil or (${Lz}>27 and ${Lz}<30) then return r end end ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`);
 
-  // Env: getfenv only — no _ENV/_G/shared/game/workspace tokens
-  L.push(`local ${N.env}=setmetatable({},{__index=function(_,k) local ok,v=pcall(function() local e=getfenv and getfenv(0) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end ok,v=pcall(function() local e=getfenv and getfenv(1) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end return nil end})`);
+  // Env: bind critical stdlib (error/print/pcall/...) so AT can actually abort; then getfenv fallback
+  // Names built via alphabet — no plaintext "error"/"print" in source
+  L.push(`local __e=error local __p=print local __pc=pcall local __ty=type local __ts=tostring local __tn=tonumber local __pr=pairs local __ip=ipairs local __sl=select local __un=table.unpack or unpack local __nx=next local __rg=rawget local __rs=rawset local __sm=setmetatable local __gm=getmetatable local __er=error`);
+  L.push(`local __ne=${N.cx}(101)..${N.cx}(114)..${N.cx}(114)..${N.cx}(111)..${N.cx}(114)`); // error
+  L.push(`local __np=${N.cx}(112)..${N.cx}(114)..${N.cx}(105)..${N.cx}(110)..${N.cx}(116)`); // print
+  L.push(`local __npc=${N.cx}(112)..${N.cx}(99)..${N.cx}(97)..${N.cx}(108)..${N.cx}(108)`); // pcall
+  L.push(`local __nty=${N.cx}(116)..${N.cx}(121)..${N.cx}(112)..${N.cx}(101)`); // type
+  L.push(`local __nts=${N.cx}(116)..${N.cx}(111)..${N.cx}(115)..${N.cx}(116)..${N.cx}(114)..${N.cx}(105)..${N.cx}(110)..${N.cx}(103)`);
+  L.push(`local __ntn=${N.cx}(116)..${N.cx}(111)..${N.cx}(110)..${N.cx}(117)..${N.cx}(109)..${N.cx}(98)..${N.cx}(101)..${N.cx}(114)`);
+  L.push(`local __npr=${N.cx}(112)..${N.cx}(97)..${N.cx}(105)..${N.cx}(114)..${N.cx}(115)`);
+  L.push(`local __nip=${N.cx}(105)..${N.cx}(112)..${N.cx}(97)..${N.cx}(105)..${N.cx}(114)..${N.cx}(115)`);
+  L.push(`local __ng=${N.cx}(103)..${N.cx}(97)..${N.cx}(109)..${N.cx}(101)`); // game
+  L.push(`local ${N.env}=setmetatable({},{__index=function(_,k) if k==__ne or k==__er then return __e end if k==__np then return __p end if k==__npc then return __pc end if k==__nty then return __ty end if k==__nts then return __ts end if k==__ntn then return __tn end if k==__npr then return __pr end if k==__nip then return __ip end local ok,v=pcall(function() local e=getfenv and getfenv(0) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end ok,v=pcall(function() local e=getfenv and getfenv(1) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end return nil end})`);
+  // CALL nil must hard-stop (AT error() must not be skipped)
   L.push(`${N.run}(${N.ch},{},${N.env})`);
 
 
@@ -763,10 +803,13 @@ function buildShell(runtime, opts = {}) {
   }
   const atIds = entries.filter((e) => e.at).map((e) => e.id);
   // Layer1 AT: run split slots; any trip already returned inside slot C; belt-and-suspenders check
+
+  // AT probe ONLY in layer2 bytecode (packed) — no plaintext UserService on surface
   const atBoot =
     atIds.length > 0
       ? `for _,i in ipairs({${atIds.join(',')}}) do local f=rawget(self,i) if type(f)=="function" then pcall(f) end end if (_G._wan_at or 0)>0 then if not _G.elysium_was_here then _G.elysium_was_here=math.random() print("WAN OBFUSCATE chao may ku:>") end return end `
       : '';
+
 
   // 50KB+ junk INLINE (not packed — no loadstring needed)
   const junk = emitJunk50KB();
@@ -812,11 +855,11 @@ export function obfuscateClydeWan(source, opts = {}) {
     }
   }
 
-  // Layer-2 AT: compile user AT into bytecode (not surface plaintext control)
+  // Layer-2 AT: BOTH anti-envcrack + UserService probe — run BEFORE payload in bytecode
   const wantAT = !(opts && opts.noAT);
   if (wantAT) {
-    // Exact user anti-envcrack — first instructions in bytecode (before payload)
-    const atSrc =
+    // 1) Exact user anti-envcrack
+    const atEnv =
       'do local a=string.sub(tostring({}),8,15) local b=string.sub(tostring({}),8,15) ' +
       'if a==b or not game then ' +
       '_G.elysium_was_here=math.random() ' +
@@ -825,8 +868,35 @@ export function obfuscateClydeWan(source, opts = {}) {
       'elseif _G.elysium_was_here>=0.4 then print("WAN OBFUSCATE chao may ku:>") ' +
       'elseif _G.elysium_was_here>=0.6 then print("WAN OBFUSCATE chao may ku:>") ' +
       'else print("WAN OBFUSCATE chao may ku:>") end return end end\n';
-    srcIn = atSrc + srcIn;
-    log('AT layer2 exact prepended (runs before payload)');
+    // 2) UserService/Players probe (user AT) — fail → error("dtc",0)
+    const atProbe =
+      'do\n' +
+      'local Players=game:GetService("Players")\n' +
+      'local UserService=game:GetService("UserService")\n' +
+      'local PROBE_ID=1\n' +
+      'local function verify()\n' +
+      'if type(game.PlaceId)~="number" or game.PlaceId<=0 then return false end\n' +
+      'local ok1,infos=pcall(function() return UserService:GetUserInfosByUserIdsAsync({PROBE_ID}) end)\n' +
+      'if not ok1 or type(infos)~="table" or #infos~=1 or type(infos[1])~="table" then return false end\n' +
+      'local info=infos[1]\n' +
+      'if info.Id~=PROBE_ID or type(info.Username)~="string" or #info.Username==0 or type(info.DisplayName)~="string" or #info.DisplayName==0 then return false end\n' +
+      'local probeName=info.Username\n' +
+      'local ok2,backId=pcall(function() return Players:GetUserIdFromNameAsync(probeName) end)\n' +
+      'if not ok2 or type(backId)~="number" or backId~=PROBE_ID then return false end\n' +
+      'local ok3,name2=pcall(function() return Players:GetNameFromUserIdAsync(PROBE_ID) end)\n' +
+      'if not ok3 or type(name2)~="string" or name2~=probeName then return false end\n' +
+      'local ok4,infos2=pcall(function() return UserService:GetUserInfosByUserIdsAsync({PROBE_ID}) end)\n' +
+      'if not ok4 or type(infos2)~="table" or #infos2~=1 or infos2[1].Username~=probeName then return false end\n' +
+      'return true\n' +
+      'end\n' +
+      'if not verify() then\n' +
+      'pcall(function() error("dtc",0) end)\n' +
+      'error("dtc",0)\n' +
+      'return\n' +
+      'end\n' +
+      'end\n';
+    srcIn = atEnv + atProbe + srcIn;
+    log('AT layer2 envcrack+UserService probe prepended (before payload)');
   }
 
   log('Clyde regCompile...');

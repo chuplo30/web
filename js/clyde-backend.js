@@ -18,10 +18,7 @@ export function clydeAvailable() {
 export function validateLuau(source) {
   const src = String(source || '');
   if (!src.trim()) return { ok: false, error: 'empty code' };
-  // Reject pure garbage (no Luau structure) — still allow long Roblox scripts
-  if (!/\b(local|function|return|if|while|for|repeat|print|game|then|end|do|else|elseif|until|break|in|not|and|or|true|false|nil|task|workspace|script|shared|typeof|continue|export|type)\b|[=\(\)]/.test(src)) {
-    return { ok: false, error: 'not valid Luau (no recognizable syntax)' };
-  }
+  // no keyword prefilter (user requested — allow any input past empty)
   try {
     const { tokens, errors } = lex(src);
     if (errors && errors.length) {
