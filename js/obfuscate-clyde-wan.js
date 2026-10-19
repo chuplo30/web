@@ -8,7 +8,7 @@
  *
  * All random names 1-char; no plaintext "op==N"; dispatch via table.
  */
-import { compileClydeChunk, clydeAvailable } from './clyde-backend.js';
+import { compileClydeChunk, clydeAvailable, validateLuau } from './clyde-backend.js';
 
 /** Shared AT (user anti-envcrack) — same condition every payload; checksum unique per build */
 /** Layer1 AT — text split across surface slots; Layer2 also in bytecode (runs before payload) */
@@ -392,7 +392,16 @@ function serializeChunk(chunk) {
   const c2 = ((chk >>> 8) & 255) ^ magic[2];
   const c3 = (chk & 255) ^ magic[3];
   buf.push(c0, c1, c2, c3);
-  return { bytes: Uint8Array.from(buf), checksum: chk, magic };
+  // secondary integrity (odd indices only) — differs from primary adler
+  let s1 = 3, s2 = 7;
+  for (let i = 4; i < buf.length - 4; i++) {
+    if ((i & 1) === 1) {
+      s1 = (s1 + (buf[i] & 255)) % 65521;
+      s2 = (s2 + s1) % 65521;
+    }
+  }
+  const mid = ((s2 << 16) | s1) >>> 0;
+  return { bytes: Uint8Array.from(buf), checksum: chk, magic, mid };
 }
 
 function wanPack(bytes) {
@@ -584,7 +593,7 @@ function emitRuntimeFromBytes(pack) {
   L.push(`local ${N.bytes}=${acc}`);
 
   // Clyde-style anti-hook: debug.info / getinfo — names via alphabet, no plaintext
-  L.push(`do local _dn=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _in=${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _gi=${N.cx}(103)..${N.cx}(101)..${N.cx}(116)..${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_dn] or nil end) if type(_d)~="table" then _ok,_d=pcall(function() return rawget(getfenv and getfenv(0) or {},_dn) end) end if type(_d)=="table" then if type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end local _inf=_d[_in] or _d[_gi] if type(_inf)=="function" then local function _isC(fn) local ok,r=pcall(_inf,fn,"s") if not ok then ok,r=pcall(_inf,fn,"S") end if ok and type(r)=="string" then return r==${N.cx}(91)..${N.cx}(67)..${N.cx}(93) or r:sub(1,3)==${N.cx}(91)..${N.cx}(67)..${N.cx}(93) end if ok and type(r)=="table" and r.what then return r.what==${N.cx}(67) end return true end local _bad=false if not _isC(pcall) then _bad=true end if type(print)=="function" and not _isC(print) then _bad=true end if type(tostring)=="function" and not _isC(tostring) then _bad=true end if _bad then for i=1,#${N.bytes} do ${N.bytes}[i]=${N.bx}(${N.bytes}[i] or 0,${deepKeyExpr(randInt(1,200))}) end return end end end end`);
+  L.push(`do local _dn=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_dn] or nil end) if type(_d)=="table" and type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end end`);
 
 
   // buffer.fromstring
@@ -634,7 +643,9 @@ function emitRuntimeFromBytes(pack) {
 
   L.push(`local ${N.ch}=${N.proto}()`);
   // checksum: trailer XOR magic (layout not obvious plaintext adler)
-  L.push(`do local b=${N.bytes} local n=#b if n>=8 then local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local m0,m1,m2,m3=b[1] or 0,b[2] or 0,b[3] or 0,b[4] or 0 local exp=(${N.bx}(b[n-3] or 0,m0)*16777216+${N.bx}(b[n-2] or 0,m1)*65536+${N.bx}(b[n-1] or 0,m2)*256+${N.bx}(b[n] or 0,m3))%4294967296 if got~=exp then return end end end`);
+  // Multi-point integrity: primary adler trailer + secondary odd-byte adler (tamper → abort)
+  const midExp = (pack.mid != null ? (pack.mid >>> 0) : 0);
+  L.push(`do local b=${N.bytes} local n=#b if n<12 then return end local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local m0,m1,m2,m3=b[1] or 0,b[2] or 0,b[3] or 0,b[4] or 0 local exp=(${N.bx}(b[n-3] or 0,m0)*16777216+${N.bx}(b[n-2] or 0,m1)*65536+${N.bx}(b[n-1] or 0,m2)*256+${N.bx}(b[n] or 0,m3))%4294967296 if got~=exp then return end local s1,s2=3,7 for i=5,n-4 do if i%2==0 then local v=b[i] or 0 s1=(s1+v)%65521 s2=(s2+s1)%65521 end end local h=(s2*65536+s1)%4294967296 local want=(${deepKeyExpr(midExp & 255)})+(${deepKeyExpr((midExp>>>8)&255)})*256+(${deepKeyExpr((midExp>>>16)&255)})*65536+(${deepKeyExpr((midExp>>>24)&255)})*16777216 if h~=want then return end end`);
 
   L.push(`local ${N.un}=table.unpack or unpack`);
   L.push(`local function ${N.RK}(${hR},${hK},x) if x>=256 then return ${hK}[x-255] end return ${hR}[x+1] end`);
@@ -754,7 +765,7 @@ function buildShell(runtime, opts = {}) {
   // Layer1 AT: run split slots; any trip already returned inside slot C; belt-and-suspenders check
   const atBoot =
     atIds.length > 0
-      ? `for _,i in ipairs({${atIds.join(',')}}) do local f=rawget(self,i) if type(f)=="function" then pcall(f) end end if (_G._wan_at or 0)>0 then return end `
+      ? `for _,i in ipairs({${atIds.join(',')}}) do local f=rawget(self,i) if type(f)=="function" then pcall(f) end end if (_G._wan_at or 0)>0 then if not _G.elysium_was_here then _G.elysium_was_here=math.random() print("WAN OBFUSCATE chao may ku:>") end return end `
       : '';
 
   // 50KB+ junk INLINE (not packed — no loadstring needed)
@@ -769,6 +780,10 @@ export function obfuscateClydeWan(source, opts = {}) {
   if (!clydeAvailable()) throw new Error('Clyde not available');
   const debug = !!opts.debug;
   const log = debug ? (m) => console.log('[WAN-Clyde] ' + m) : () => {};
+  if (!(opts && opts.noValidate)) {
+    const syn = validateLuau(source);
+    if (!syn.ok) throw new Error('syntax: ' + (syn.error || 'invalid Luau'));
+  }
 
   // 1) binary bytecode
   // Light SM: auto only for small scripts (<=8 units). Large GUI → skip (prevents hang).
@@ -828,6 +843,7 @@ export function obfuscateClydeWan(source, opts = {}) {
   const pack = wanPack(bin);
   pack.checksum = ser.checksum;
   pack.magic = ser.magic;
+  pack.mid = ser.mid;
   log('WAN pack keys=' + pack.keyCount + ' b94=' + pack.b94.length + ' alpha=' + pack.alpha);
 
   // 3) Runtime INLINE: buffer → parser → VM (no loadstring)

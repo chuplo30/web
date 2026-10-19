@@ -14,6 +14,37 @@ export function clydeAvailable() {
   return typeof lex === 'function' && typeof generateRegVM === 'function';
 }
 
+/** Syntax check before obfuscate — reject garbage, allow full Roblox Luau */
+export function validateLuau(source) {
+  const src = String(source || '');
+  if (!src.trim()) return { ok: false, error: 'empty code' };
+  // Reject pure garbage (no Luau structure) — still allow long Roblox scripts
+  if (!/\b(local|function|return|if|while|for|repeat|print|game|then|end|do|else|elseif|until|break|in|not|and|or|true|false|nil|task|workspace|script|shared|typeof|continue|export|type)\b|[=\(\)]/.test(src)) {
+    return { ok: false, error: 'not valid Luau (no recognizable syntax)' };
+  }
+  try {
+    const { tokens, errors } = lex(src);
+    if (errors && errors.length) {
+      const e = errors[0];
+      const msg = (e && (e.message || e.msg)) || String(e);
+      const line = e && (e.line || e.lineno);
+      return { ok: false, error: line ? `line ${line}: ${msg}` : msg };
+    }
+    if (!tokens || tokens.length < 2) {
+      return { ok: false, error: 'not valid Luau (too few tokens)' };
+    }
+    try {
+      parse(tokens);
+    } catch (e) {
+      return { ok: false, error: String(e && e.message ? e.message : e) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+
 function serChunk(c) {
   return {
     K: c.K || [],

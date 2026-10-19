@@ -8,6 +8,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { obfuscate } from './js/obfuscate.js';
+import { validateLuau } from './js/clyde-backend.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -40,6 +41,10 @@ app.post('/api/obfuscate', (req, res) => {
     }
     if (!String(code).trim()) {
       return res.status(400).json({ ok: false, error: 'empty code' });
+    }
+    const syn = validateLuau(code);
+    if (!syn.ok) {
+      return res.status(400).json({ ok: false, error: 'syntax: ' + (syn.error || 'invalid Luau'), syntax: false });
     }
     const opts = buildOpts(bodyOpts);
     const result = obfuscate(code, opts);

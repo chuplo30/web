@@ -1162,12 +1162,14 @@ export function obfuscate(input, opts = {}) {
         log('Clyde-WAN primary ok ' + r.code.length);
         return {
           code: r.code,
-          meta: Object.assign({}, r.meta || {}, { mode: 'clyde-wan', backend: 'clyde-cf-max' }),
+          meta: Object.assign({ mode: 'clyde-wan' }, r.meta || {}),
         };
       }
       log('Clyde-WAN empty, fallback legacy');
     } catch (e) {
-      log('Clyde-WAN err: ' + (e && e.message) + ' — fallback legacy');
+      const msg = String(e && e.message ? e.message : e);
+      if (msg.startsWith('syntax:')) throw e; // do not fallback on invalid Luau
+      log('Clyde-WAN err: ' + msg + ' — fallback legacy');
     }
   }
 

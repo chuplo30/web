@@ -100,6 +100,38 @@ def cors(resp: Response):
     return resp
 
 
+
+
+@app.post("/api/validate")
+def validate():
+    """Luau syntax check only."""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        code = body.get("code") or body.get("source") or ""
+        if not str(code).strip():
+            return jsonify(ok=False, error="empty code", syntax=False), 400
+        runner = r"""
+import { validateLuau } from './js/clyde-backend.js';
+const code = process.argv[2];
+const r = validateLuau(code);
+process.stdout.write(JSON.stringify(r));
+"""
+        proc = subprocess.run(
+            [NODE, "--input-type=module", "-e", runner, code],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        out = (proc.stdout or "").strip()
+        data = json.loads(out) if out else {"ok": False, "error": "validate failed"}
+        status = 200 if data.get("ok") else 400
+        data["syntax"] = bool(data.get("ok"))
+        return jsonify(data), status
+    except Exception as e:
+        return jsonify(ok=False, error=str(e), syntax=False), 500
+
+
 @app.route("/api/obfuscate", methods=["OPTIONS"])
 def obfuscate_opts():
     return ("", 204)
