@@ -1,6 +1,6 @@
 /**
  * Pipeline (user order):
- *   source → Clyde regCompile → binary bytecode
+ *   source → Clyde regCompile (rename+CF max) → binary bytecode + anti-hook(debug.info)
  *   → Runtime (buffer.fromstring → parser → VM dispatch table)
  *   → WAN pack bytecode: xor20→hex→xor20→base94 + 40–80 keys + fake vmaps
  *   → setmetatable surface (decoy + anti-deobf + AT + 50 junk)
@@ -518,10 +518,16 @@ function emitRuntimeFromBytes(pack) {
   L.push(`local function ${fk8}(a,b,c) return ${fk4}(${fk3}(${fk1}(a or ${N.p}))) end`);
   // Dead calls so deobf sees multiple entry points
   L.push(`if false then local _=${fk8}(${N.p}) local __=${fk7}(${N.p}) local ___=${fk2}(${N.p}) end`);
-  // ONLY real chain assigned
-  L.push(`local ${N.bytes}=${N.d3}(${N.d2}(${N.d1}(${N.p})))`);
-  // opaque anti-hook
-  L.push(`do local _n=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_n] or nil end) if type(_d)=="table" and type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end end`);
+  // intermediate identity transforms (look like real crypto steps)
+  const mid1 = rn(), mid2 = rn(), mid3 = rn();
+  const ik = randInt(1, 255);
+  L.push(`local function ${mid1}(t) local o={} local k=${deepKeyExpr(ik)} for i=1,#t do o[i]=${N.bx}(${N.bx}(t[i] or 0,k),k) end return o end`);
+  L.push(`local function ${mid2}(s) if type(s)~="string" then return s end local o="" local k=${deepKeyExpr(ik)} for i=1,#s do local b=s:byte(i) or 0 o=o..${N.cx}(${N.bx}(${N.bx}(b,k),k)) end return o end`);
+  L.push(`local function ${mid3}(t) local n=#t local o={} for i=1,n do o[i]=t[i] end return o end`);
+  // opaque pick: only real path when 1+1==2; fakes never run
+  L.push(`local ${N.bytes}=(function() local a,b,c if (1+1==2) then a=${N.d1}(${N.p}) a=${mid1}(a) b=${N.d2}(a) b=${mid2}(b) c=${N.d3}(b) c=${mid3}(c) else a=${fk1}(${N.p}) b=${fk3}(a) c=${fk4}(b) end return c end)()`);
+  // Clyde-style anti-hook: debug.info / getinfo — names via alphabet, no plaintext
+  L.push(`do local _dn=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _in=${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _gi=${N.cx}(103)..${N.cx}(101)..${N.cx}(116)..${N.cx}(105)..${N.cx}(110)..${N.cx}(102)..${N.cx}(111) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_dn] or nil end) if type(_d)~="table" then _ok,_d=pcall(function() return rawget(getfenv and getfenv(0) or {},_dn) end) end if type(_d)=="table" then if type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end local _inf=_d[_in] or _d[_gi] if type(_inf)=="function" then local function _isC(fn) local ok,r=pcall(_inf,fn,"s") if not ok then ok,r=pcall(_inf,fn,"S") end if ok and type(r)=="string" then return r==${N.cx}(91)..${N.cx}(67)..${N.cx}(93) or r:sub(1,3)==${N.cx}(91)..${N.cx}(67)..${N.cx}(93) end if ok and type(r)=="table" and r.what then return r.what==${N.cx}(67) end return true end local _bad=false if not _isC(pcall) then _bad=true end if type(print)=="function" and not _isC(print) then _bad=true end if type(tostring)=="function" and not _isC(tostring) then _bad=true end if _bad then for i=1,#${N.bytes} do ${N.bytes}[i]=${N.bx}(${N.bytes}[i] or 0,${deepKeyExpr(randInt(1,200))}) end return end end end end`);
 
 
   // buffer.fromstring
