@@ -1,16 +1,18 @@
-# UptimeRobot + Flask
+# UptimeRobot + Flask (Render)
 
 ```bash
 pip install -r requirements.txt
-# Node 18+ required for /api/obfuscate
-npm install   # express still available via: npm start
+npm install   # node for /api/obfuscate
 python3 app.py
-# or: PORT=8080 python3 app.py
+# default PORT=10000  (Render sets $PORT automatically)
 ```
 
-UptimeRobot HTTP(s) monitor:
-- URL: `https://YOUR_HOST/api/health`  (or `/health` / `/ping`)
-- Keyword: `"ok":true` optional
+UptimeRobot:
+- URL: `https://YOUR_RENDER_URL/api/health`
+- or `/health` / `/ping`
 - Interval: 5 min
 
-Express alternative: `npm start` → same `/api/health`.
+Local:
+```bash
+PORT=10000 python3 app.py
+```

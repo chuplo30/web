@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
 NODE = os.environ.get("NODE_BIN", "node")
-PORT = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", "8080")))
+PORT = int(os.environ.get("PORT", os.environ.get("FLASK_PORT", "10000")))
 
 
 @app.get("/api/health")
