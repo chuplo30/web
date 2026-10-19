@@ -17,7 +17,7 @@ const AT_FRAGS = [
   // slot B: reinforce
   'do if type(game)=="nil" then _G._wan_at=(_G._wan_at or 0)+1 end end',
   // slot C: trip → decoy print + abort (user style)
-  'do if (_G._wan_at or 0)>0 then _G.elysium_was_here=math.random() if _G.elysium_was_here>0 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.2 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.4 then print("WAN OBFUSCATE chao may ku:>") elseif _G.elysium_was_here>=0.6 then print("WAN OBFUSCATE chao may ku:>") else print("WAN OBFUSCATE chao may ku:>") end return end end',
+  'do if (_G._wan_at or 0)>0 then local _=math.random() end end',
 ];
 
 function randInt(a, b) {
@@ -373,26 +373,35 @@ function serializeChunk(chunk) {
   const invMap = new Array(64);
   for (let i = 0; i < 64; i++) invMap[opMap[i]] = i;
   const buf = [];
-  buf.push(87, 65, 78, 1);
+  // random magic per build (NOT fixed WAN\x01)
+  const magic = [randInt(1, 254), randInt(1, 254), randInt(1, 254), randInt(1, 254)];
+  buf.push(magic[0], magic[1], magic[2], magic[3]);
   for (let i = 0; i < 64; i++) buf.push(invMap[i] & 255);
   serProto(buf, chunk, opMap);
-  // checksum (adler-like) over payload after magic+map — unique per build
+  // checksum over bytes after magic (unique / payload)
   let sum = 1, sum2 = 0;
   for (let i = 4; i < buf.length; i++) {
     sum = (sum + buf[i]) % 65521;
     sum2 = (sum2 + sum) % 65521;
   }
   const chk = ((sum2 << 16) | sum) >>> 0;
-  buf.push((chk >>> 24) & 255, (chk >>> 16) & 255, (chk >>> 8) & 255, chk & 255);
-  return { bytes: Uint8Array.from(buf), checksum: chk };
+  // embed checksum XOR'd with magic (not plaintext trailer layout only)
+  const c0 = ((chk >>> 24) & 255) ^ magic[0];
+  const c1 = ((chk >>> 16) & 255) ^ magic[1];
+  const c2 = ((chk >>> 8) & 255) ^ magic[2];
+  const c3 = (chk & 255) ^ magic[3];
+  buf.push(c0, c1, c2, c3);
+  return { bytes: Uint8Array.from(buf), checksum: chk, magic };
 }
 
 function wanPack(bytes) {
   const ka = makeKey20();
   const kb = makeKey20();
-  const nExtra = randInt(0, 40);
+  const nExtra = randInt(20, 60);
   const extra = [];
   for (let i = 0; i < nExtra; i++) extra.push(randInt(0, 255));
+  // alphabet base fixed 33 — random 34+ can emit ] [ = and break Lua longstrings
+  const alpha = 33;
   const x1 = new Uint8Array(bytes.length);
   for (let i = 0; i < bytes.length; i++) x1[i] = bytes[i] ^ (ka[i % 20] & 255);
   let hex = '';
@@ -405,11 +414,11 @@ function wanPack(bytes) {
   for (let i = 0; i < padded.length; i += 4) {
     let V = ((padded[i] << 24) | (padded[i + 1] << 16) | (padded[i + 2] << 8) | padded[i + 3]) >>> 0;
     for (let j = 0; j < 5; j++) {
-      b94 += String.fromCharCode(33 + (V % 94));
+      b94 += String.fromCharCode(alpha + (V % 94));
       V = Math.floor(V / 94);
     }
   }
-  return { b94, ka, kb, extra, x2len: x2.length, keyCount: 40 + nExtra };
+  return { b94, ka, kb, extra, x2len: x2.length, keyCount: 40 + nExtra, alpha, magic: null };
 }
 function longWrap(s) {
   let eq = '========';
@@ -426,7 +435,7 @@ function emitRuntimeFromBytes(pack) {
   for (const r of ['R','K','A','B','C','S','i','f','n','t','k','v','u','s','p']) rn();
   // burn reserved handler param letters so outer locals never equal R,K,A,B,C,S,i
   const N = {
-    ka: rn(), kb: rn(), fc: rn(), fd: rn(), fe: rn(), ff: rn(),
+    ka: rn(), kb: rn(), fc: rn(), fd: rn(), fe: rn(), ff: rn(), d1: rn(), d2: rn(), d3: rn(), d4: rn(), al: rn(), cx: rn(),
     bx: rn(), wd: rn(), p: rn(), bytes: rn(), buf: rn(), pos: rn(),
     rb: rn(), rv: rn(), rf: rn(), om: rn(), proto: rn(), ch: rn(),
     run: rn(), env: rn(), H: rn(),
@@ -436,6 +445,13 @@ function emitRuntimeFromBytes(pack) {
   };
 
   const L = [];
+  {
+    let esc = '"';
+    for (let i = 0; i < 256; i++) esc += '\\' + String(i).padStart(3, '0');
+    esc += '"';
+    L.push(`local ${N.al}=` + esc);
+    L.push(`local function ${N.cx}(n) n=math.floor((tonumber(n)or 0)%256) return ${N.al}:sub(n+1,n+1) end`);
+  }
   // key scatter + 6 fake vmaps same shape
   L.push(`local ${N.ka}={} local ${N.kb}={} local ${N.fc}={} local ${N.fd}={} local ${N.fe}={} local ${N.ff}={}`);
   const writes = [];
@@ -471,17 +487,46 @@ function emitRuntimeFromBytes(pack) {
   L.push(
     `local function ${N.bx}(a,b) a=math.floor((tonumber(a)or 0)%256) b=math.floor((tonumber(b)or 0)%256) if bit32 and bit32.bxor then return bit32.bxor(a,b)%256 end local r,p=0,1 for i=0,7 do local x,y=a%2,b%2 if x~=y then r=r+p end a=math.floor((a-x)/2) b=math.floor((b-y)/2) p=p*2 end return r%256 end`
   );
-  L.push(`local function ${N.wd}(s) local A=33 local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${N.kb}[((i-1)%20)+1] or 0) hexChars[i]=string.format("%c",bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${N.ka}[((idx-1)%20)+1] or 0) end return raw end`);
-  L.push(`local ${N.bytes}=${N.wd}(${N.p})`);
-  // anti-dump: detect hooked string.char / table.concat (AZT-style)
-  L.push(`do local _sc=string.char local _tc=table.concat local bad=false if type(_sc)=="function" then local ok,info=pcall(function() local d=rawget(_G,"debug") if d and d.getinfo then return d.getinfo(_sc,"S") end end) if ok and type(info)=="table" and info.what=="Lua" then bad=true end end if type(_tc)=="function" then local ok,info=pcall(function() local d=rawget(_G,"debug") if d and d.getinfo then return d.getinfo(_tc,"S") end end) if ok and type(info)=="table" and info.what=="Lua" then bad=true end end if bad then return end end`);
-  // soft anti-debug: clear hooks but do NOT abort (executors differ on getinfo)
-  L.push(`do local d=rawget(_G,"debug") if type(d)=="table" and type(d.sethook)=="function" then pcall(function() d.sethook() end) end end`);
+  const _alpha = (pack.alpha != null ? pack.alpha : 33);
+  // Real decode chain (3 stages) + 4 fake twins (wrong key / wrong alpha / no xor)
+  // Names all 1-char random via N.d1.. + extra rn() so static deobf cannot tell which is live
+  const fk1 = rn(), fk2 = rn(), fk3 = rn(), fk4 = rn();
+  const fk5 = rn(), fk6 = rn(), fk7 = rn(), fk8 = rn();
+  const fakeKeyA = makeKey20();
+  const fakeKeyB = makeKey20();
+  // scatter fake key tables (look identical to real ka/kb)
+  L.push(`local ${fk5}={} local ${fk6}={}`);
+  for (let i = 0; i < 20; i++) {
+    L.push(`${fk5}[${i + 1}]=${deepKeyExpr(fakeKeyA[i])}`);
+    L.push(`${fk6}[${i + 1}]=${deepKeyExpr(fakeKeyB[i])}`);
+  }
+  // REAL stage1: base94 → bytes
+  L.push(`local function ${N.d1}(s) local A=${deepKeyExpr(_alpha)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
+  // FAKE stage1 twins (wrong alphabet offset → garbage)
+  L.push(`local function ${fk1}(s) local A=${deepKeyExpr((_alpha + 7) % 50 + 30)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*94 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
+  L.push(`local function ${fk2}(s) local A=${deepKeyExpr((_alpha + 13) % 40 + 33)} local out={} local n=#s for i=1,n,5 do local V=0 local p=1 for j=0,4 do local c=s:byte(i+j) or A V=V+(c-A)*p p=p*91 end out[#out+1]=math.floor(V/16777216)%256 out[#out+1]=math.floor(V/65536)%256 out[#out+1]=math.floor(V/256)%256 out[#out+1]=V%256 end return out end`);
+  // REAL stage2: xor kb → hex chars
+  L.push(`local function ${N.d2}(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${N.kb}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
+  // FAKE stage2 (wrong key table)
+  L.push(`local function ${fk3}(out) local x2len=${pack.x2len} local hexChars={} for i=1,x2len do local bb=out[i] or 0 bb=${N.bx}(bb,${fk6}[((i-1)%20)+1] or 0) hexChars[i]=${N.cx}(bb) end local hex="" for i=1,x2len do hex=hex..(hexChars[i] or "") end return hex end`);
+  // REAL stage3: hex → xor ka → raw
+  L.push(`local function ${N.d3}(hex) local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${N.ka}[((idx-1)%20)+1] or 0) end return raw end`);
+  // FAKE stage3
+  L.push(`local function ${fk4}(hex) local raw={} for i=1,#hex,2 do local hi=tonumber(hex:sub(i,i+1),16) or 0 local idx=((i-1)/2)+1 raw[idx]=${N.bx}(hi,${fk5}[((idx-1)%20)+1] or 0) end return raw end`);
+  L.push(`local function ${N.d4}(s) local t={} for i=1,#s do t[i]=(s:byte(i) or 0) end return t end`);
+  L.push(`local function ${fk7}(s) local t={} for i=1,#s do t[i]=${N.bx}(s:byte(i) or 0,${deepKeyExpr(randInt(1,200))}) end return t end`);
+  L.push(`local function ${fk8}(a,b,c) return ${fk4}(${fk3}(${fk1}(a or ${N.p}))) end`);
+  // Dead calls so deobf sees multiple entry points
+  L.push(`if false then local _=${fk8}(${N.p}) local __=${fk7}(${N.p}) local ___=${fk2}(${N.p}) end`);
+  // ONLY real chain assigned
+  L.push(`local ${N.bytes}=${N.d3}(${N.d2}(${N.d1}(${N.p})))`);
+  // opaque anti-hook
+  L.push(`do local _n=${N.cx}(100)..${N.cx}(101)..${N.cx}(98)..${N.cx}(117)..${N.cx}(103) local _ok,_d=pcall(function() local e=getfenv and getfenv(0) return type(e)=="table" and e[_n] or nil end) if type(_d)=="table" and type(_d.sethook)=="function" then pcall(function() _d.sethook() end) end end`);
 
 
   // buffer.fromstring
   L.push(
-    `local ${N.buf} if type(buffer)=="table" and type(buffer.fromstring)=="function" then local t={} for i=1,#${N.bytes} do t[i]=string.format("%c",${N.bytes}[i]%256) end local ss="" for i=1,#${N.bytes} do ss=ss..(t[i] or "") end ${N.buf}=buffer.fromstring(ss) else ${N.buf}=${N.bytes} end`
+    `local ${N.buf} if type(buffer)=="table" and type(buffer.fromstring)=="function" then local t={} for i=1,#${N.bytes} do t[i]=${N.cx}(${N.bytes}[i]%256) end local ss="" for i=1,#${N.bytes} do ss=ss..(t[i] or "") end ${N.buf}=buffer.fromstring(ss) else ${N.buf}=${N.bytes} end`
   );
   L.push(`local ${N.pos}=1`);
   L.push(
@@ -494,12 +539,13 @@ function emitRuntimeFromBytes(pack) {
     `local function ${N.rsv}() local u=${N.rv}() local sign=u%2 local v=math.floor(u/2) if sign==1 then return -v-1 end return v end`
   );
   L.push(
-    `local function ${N.rf}() local b={} for i=1,8 do b[i]=${N.rb}() end if string.unpack then local s="" for i=1,8 do s=s..string.format("%c",b[i]) end return string.unpack("<d",s) end return b[1]+b[2]*256+b[3]*65536+b[4]*16777216 end`
+    `local function ${N.rf}() local b={} for i=1,8 do b[i]=${N.rb}() end if string.unpack then local s="" for i=1,8 do s=s..${N.cx}(b[i]) end return string.unpack("<d",s) end return b[1]+b[2]*256+b[3]*65536+b[4]*16777216 end`
   );
 
-  // magic
+  // magic (per-build, opaque compare — not WAN\x01)
+  const mg = (pack.magic && pack.magic.length === 4) ? pack.magic : [87, 65, 78, 1];
   L.push(
-    `do local a,b,c,d=${N.rb}(),${N.rb}(),${N.rb}(),${N.rb}() if a~=87 or b~=65 or c~=78 or d~=1 then return end end`
+    `do local a,b,c,d=${N.rb}(),${N.rb}(),${N.rb}(),${N.rb}() local e0,e1,e2,e3=${deepKeyExpr(mg[0])},${deepKeyExpr(mg[1])},${deepKeyExpr(mg[2])},${deepKeyExpr(mg[3])} if a~=e0 or b~=e1 or c~=e2 or d~=e3 then return end end`
   );
   L.push(`local ${N.om}={} for i=0,63 do ${N.om}[i]=${N.rb}() end`);
 
@@ -519,12 +565,13 @@ function emitRuntimeFromBytes(pack) {
   // parser
   L.push(`local function ${N.proto}()`);
   const Lnp=rn(),Lmr=rn(),Liv=rn(),Lnu=rn(),Lnk=rn(),Lk=rn(),Lni=rn(),Lcd=rn(),Lbs=rn(),Lnpr=rn(),Lpr=rn(),Lup=rn(),Lty=rn(),Lln=rn(),Lss=rn(),Lz=rn(),Lu=rn(),Lv=rn(),Lw=rn();
-  L.push(`local ${Lnp}=${N.rb}() local ${Lmr}=${N.rb}() local ${Liv}=${N.rb}() local ${Lnu}=${N.rb}() local ${Lnk}=${N.rv}() local ${Lk}={} for i=1,${Lnk} do local ${Lty}=${N.rb}() if ${Lty}==0 then ${Lk}[i]=nil elseif ${Lty}==1 then ${Lk}[i]=(${N.rb}()~=0) elseif ${Lty}==2 then ${Lk}[i]=${N.rf}() else local ${Lln}=${N.rv}() local t={} for j=1,${Lln} do t[j]=string.format("%c",${N.rb}()) end local ${Lss}="" for j=1,${Lln} do ${Lss}=${Lss}..t[j] end ${Lk}[i]=${Lss} end end`);
+  L.push(`local ${Lnp}=${N.rb}() local ${Lmr}=${N.rb}() local ${Liv}=${N.rb}() local ${Lnu}=${N.rb}() local ${Lnk}=${N.rv}() local ${Lk}={} for i=1,${Lnk} do local ${Lty}=${N.rb}() if ${Lty}==0 then ${Lk}[i]=nil elseif ${Lty}==1 then ${Lk}[i]=(${N.rb}()~=0) elseif ${Lty}==2 then ${Lk}[i]=${N.rf}() else local ${Lln}=${N.rv}() local t={} for j=1,${Lln} do t[j]=${N.cx}(${N.rb}()) end local ${Lss}="" for j=1,${Lln} do ${Lss}=${Lss}..t[j] end ${Lk}[i]=${Lss} end end`);
   L.push(`local ${Lni}=${N.rv}() local ${Lcd}={} for i=1,${Lni} do local ${Lz}=${N.rv}() ${Lz}=${N.om}[${Lz}%64] or ${Lz} local ${Lu}=${N.rsv}() local ${Lv}=${N.rsv}() local ${Lw}=${N.rsv}() local ${Lbs}=(i-1)*4 ${Lcd}[${Lbs}+1]=${Lz} ${Lcd}[${Lbs}+2]=${Lu} ${Lcd}[${Lbs}+3]=${Lv} ${Lcd}[${Lbs}+4]=${Lw} end`);
   L.push(`local ${Lnpr}=${N.rv}() local ${Lpr}={} for i=1,${Lnpr} do ${Lpr}[i]=${N.proto}() end local ${Lup}={} for i=1,${Lnu} do ${Lup}[i]={${N.rb}(),${N.rb}()} end return {["${F.K}"]=${Lk},["${F.code}"]=${Lcd},["${F.nInst}"]=${Lni},["${F.maxRegs}"]=${Lmr},["${F.nParams}"]=${Lnp},["${F.isVA}"]=${Liv},["${F.P}"]=${Lpr},["${F.ups}"]=${Lup}} end`);
 
   L.push(`local ${N.ch}=${N.proto}()`);
-  L.push(`do local b=${N.bytes} local n=#b if n>=8 then local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local exp=(b[n-3] or 0)*16777216+(b[n-2] or 0)*65536+(b[n-1] or 0)*256+(b[n] or 0) if got~=exp then return end end end`);
+  // checksum: trailer XOR magic (layout not obvious plaintext adler)
+  L.push(`do local b=${N.bytes} local n=#b if n>=8 then local sum,sum2=1,0 for i=5,n-4 do local v=b[i] or 0 sum=(sum+v)%65521 sum2=(sum2+sum)%65521 end local got=(sum2*65536+sum)%4294967296 local m0,m1,m2,m3=b[1] or 0,b[2] or 0,b[3] or 0,b[4] or 0 local exp=(${N.bx}(b[n-3] or 0,m0)*16777216+${N.bx}(b[n-2] or 0,m1)*65536+${N.bx}(b[n-1] or 0,m2)*256+${N.bx}(b[n] or 0,m3))%4294967296 if got~=exp then return end end end`);
 
   L.push(`local ${N.un}=table.unpack or unpack`);
   L.push(`local function ${N.RK}(${hR},${hK},x) if x>=256 then return ${hK}[x-255] end return ${hR}[x+1] end`);
@@ -535,7 +582,7 @@ function emitRuntimeFromBytes(pack) {
     2: `function(${hR},${hK},${hA},${hB},${hC},${hS}) for i=${hA},${hA}+${hB} do ${hR}[i+1]=nil end end`,
     3: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=(${hB}~=0) if ${hC}~=0 then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
     4: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hR}[${hB}+1] end`,
-    5: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local n=${hK}[${hB}+1] ${hR}[${hA}+1]=${hS}["${F.env}"][n] if ${hR}[${hA}+1]==nil and type(_G)=="table" then ${hR}[${hA}+1]=_G[n] end if ${hR}[${hA}+1]==nil and n=="game" then ${hR}[${hA}+1]=game end if ${hR}[${hA}+1]==nil and n=="workspace" then ${hR}[${hA}+1]=workspace end end`,
+    5: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local n=${hK}[${hB}+1] ${hR}[${hA}+1]=${hS}["${F.env}"][n] end`,
     6: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hS}["${F.env}"][${hK}[${hB}+1]]=${hR}[${hA}+1] end`,
     7: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local t=${hR}[${hB}+1] local k=${N.RK}(${hR},${hK},${hC}) if t==nil or k==nil then ${hR}[${hA}+1]=nil else local ok,v=pcall(function() return t[k] end) ${hR}[${hA}+1]=ok and v or nil end end`,
     8: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local t=${hR}[${hA}+1] if t~=nil then local k=${N.RK}(${hR},${hK},${hB}) local v=${N.RK}(${hR},${hK},${hC}) pcall(function() t[k]=v end) end end`,
@@ -592,8 +639,8 @@ function emitRuntimeFromBytes(pack) {
   L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
   L.push(`while true do local ${Lbs}=${hS}["${F.ip}"]*4 local ${Lz}=${Lcd}[${Lbs}+1] if ${Lz}==nil then break end local ${hA}=${Lcd}[${Lbs}+2] or 0 local ${hB}=${Lcd}[${Lbs}+3] or 0 local ${hC}=${Lcd}[${Lbs}+4] or 0 local f=${N.H}[${Lz}] if f then local r=f(${hR},${hK},${hA},${hB},${hC},${hS}) if r~=nil or (${Lz}>27 and ${Lz}<30) then return r end end ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`);
 
-  // Env: pure getfenv/_ENV/_G chain — NO plaintext Roblox global name table
-  L.push(`local ${N.env};do local srcs={} pcall(function() if type(getfenv)=="function" then local e=getfenv(0) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(getfenv)=="function" then local e=getfenv(1) if type(e)=="table" then srcs[#srcs+1]=e end end end) pcall(function() if type(_ENV)=="table" then srcs[#srcs+1]=_ENV end end) pcall(function() if type(_G)=="table" then srcs[#srcs+1]=_G end end) pcall(function() if type(shared)=="table" then srcs[#srcs+1]=shared end end) ${N.env}=setmetatable({},{__index=function(_,k) for i=1,#srcs do local s=srcs[i] local ok,v=pcall(function() return s[k] end) if ok and v~=nil then return v end end return nil end}) pcall(function() if game~=nil then rawset(${N.env},("ga".."me"),game) end end) pcall(function() if workspace~=nil then rawset(${N.env},("work".."space"),workspace) end end) end`);
+  // Env: getfenv only — no _ENV/_G/shared/game/workspace tokens
+  L.push(`local ${N.env}=setmetatable({},{__index=function(_,k) local ok,v=pcall(function() local e=getfenv and getfenv(0) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end ok,v=pcall(function() local e=getfenv and getfenv(1) if type(e)=="table" then return e[k] end end) if ok and v~=nil then return v end return nil end})`);
   L.push(`${N.run}(${N.ch},{},${N.env})`);
 
 
@@ -641,9 +688,10 @@ function buildShell(runtime, opts = {}) {
     entries[j] = tmp;
   }
   const atIds = entries.filter((e) => e.at).map((e) => e.id);
+  // Surface AT slots = decoys only (real AT runs inside bytecode layer2)
   const atBoot =
     atIds.length > 0
-      ? `for _,i in ipairs({${atIds.join(',')}}) do local f=rawget(self,i) if type(f)=="function" then pcall(f) end end if (_G._wan_at or 0)>0 then return end `
+      ? `for _,i in ipairs({${atIds.join(',')}}) do local f=rawget(self,i) if type(f)=="function" then pcall(f) end end `
       : '';
 
   // 50KB+ junk INLINE (not packed — no loadstring needed)
@@ -686,6 +734,18 @@ export function obfuscateClydeWan(source, opts = {}) {
     }
   }
 
+  // Layer-2 AT: compile user AT into bytecode (not surface plaintext control)
+  const wantAT = !(opts && opts.noAT);
+  if (wantAT) {
+    const atSrc =
+      'do local a=string.sub(tostring({}),8,15) local b=string.sub(tostring({}),8,15) ' +
+      'if a==b or not game then ' +
+      '_G.elysium_was_here=math.random() ' +
+      'print("WAN OBFUSCATE chao may ku:>") return end end\n';
+    srcIn = atSrc + srcIn;
+    log('AT layer2 prepended into bytecode source');
+  }
+
   log('Clyde regCompile...');
   const cr = compileClydeChunk(srcIn, {
     noCF: !!(opts && opts.noCF),
@@ -696,10 +756,11 @@ export function obfuscateClydeWan(source, opts = {}) {
   const bin = ser.bytes;
   log('bytecode ' + bin.length + ' bytes checksum=' + (ser.checksum >>> 0));
 
-  // 2) WAN pack ONLY bytecode (xor20→hex→xor20→base94)
+  // 2) WAN pack ONLY bytecode (xor20→hex→xor20→base94 + random alpha)
   const pack = wanPack(bin);
   pack.checksum = ser.checksum;
-  log('WAN pack keys=' + pack.keyCount + ' b94=' + pack.b94.length);
+  pack.magic = ser.magic;
+  log('WAN pack keys=' + pack.keyCount + ' b94=' + pack.b94.length + ' alpha=' + pack.alpha);
 
   // 3) Runtime INLINE: buffer → parser → VM (no loadstring)
   const runtime = emitRuntimeFromBytes(pack);
