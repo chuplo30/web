@@ -16,7 +16,7 @@ $('fileInput').addEventListener('change', (e) => {
 async function callApi(code) {
   const res = await fetch('/api/obfuscate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ code }),
   });
   const text = await res.text();
@@ -24,7 +24,9 @@ async function callApi(code) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error('API not JSON (' + res.status + '): ' + text.slice(0, 180));
+    throw new Error(
+      'API not JSON (' + res.status + '): ' + text.slice(0, 200).replace(/\s+/g, ' ')
+    );
   }
   if (!res.ok || !data.ok) {
     throw new Error((data && data.error) || ('HTTP ' + res.status));
@@ -43,7 +45,7 @@ function applyResult(code, meta, inputLen) {
     ? (meta.outputBytes / 1024).toFixed(1)
     : (code.length / 1024).toFixed(1);
   $('status').textContent =
-    `OK ${meta.inputBytes || inputLen}B → ${kb}KB · mode=${meta.vmMode || '?'} · ${meta.pipeline || ''} → ${lastName}`;
+    `OK ${meta.inputBytes || inputLen}B → ${kb}KB · mode=${meta.vmMode || meta.backend || 'wan'} · ${lastName}`;
 }
 
 $('btnObf').addEventListener('click', async () => {
@@ -55,21 +57,12 @@ $('btnObf').addEventListener('click', async () => {
   $('status').textContent = 'Obfuscating (server API)...';
   $('btnObf').disabled = true;
   try {
-    // Always prefer server on Pella/Express — Clyde RegVM Max stable on Node
+    // Node-only engine (Clyde + pack) — never import obfuscate.js in browser
     const data = await callApi(input);
     applyResult(data.code || '', data.meta || {}, input.length);
   } catch (err) {
-    console.warn('API failed, try client', err);
-    try {
-      const mod = await import('./obfuscate.js');
-      const { code, meta } = mod.obfuscate(input);
-      applyResult(code, meta || {}, input.length);
-    } catch (err2) {
-      console.error(err2);
-      $('status').textContent =
-        'Error: ' + (err2 && err2.message ? err2.message : err2) +
-        ' | API: ' + (err && err.message ? err.message : err);
-    }
+    console.error(err);
+    $('status').textContent = 'Error: ' + (err && err.message ? err.message : String(err));
   } finally {
     $('btnObf').disabled = false;
   }

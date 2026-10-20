@@ -368,11 +368,13 @@ function toStateMachineLight(code) {
 function serializeChunk(chunk) {
   const pool = [];
   for (let i = 0; i < 64; i++) pool.push(i);
-  for (let i = 63; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const t = pool[i];
-    pool[i] = pool[j];
-    pool[j] = t;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 63; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = pool[i];
+      pool[i] = pool[j];
+      pool[j] = t;
+    }
   }
   const opMap = pool.slice();
   const invMap = new Array(64);
@@ -556,6 +558,8 @@ function emitRuntimeFromBytes(pack) {
   L.push(`${DT}[${KJ3}]=function(x) local z=2 for i=1,3 do z=(z*9+1)%83 end return x end`);
   L.push(`${DT}[${KJ4}]=function(x) if type(x)~="table" then return x end local o={} for i=1,#x do o[i]=x[i] end return o end`);
 
+
+
   // scatter aliases — all look live
   L.push(`local ${N.d1}=${DT}[${KB94}] local ${N.d2}=${DT}[${KHEX}] local ${N.d3}=${DT}[${KRAW}]`);
   L.push(`local ${fk1}=${DT}[${KF1}] local ${fk3}=${DT}[${KF2}] local ${fk4}=${DT}[${KF3}]`);
@@ -570,8 +574,8 @@ function emitRuntimeFromBytes(pack) {
   // noise tables
   const noiseT = rn(), noiseK = rn(), noiseV = rn();
   L.push(`local ${noiseT}={} local ${noiseK}={} local ${noiseV}={}`);
-  for (let i = 0; i < 28; i++) {
-    L.push(`${noiseT}[${randInt(10,999)}]=function(x) local z=${randInt(1,90)} for _=1,${randInt(2,5)} do z=(z*${randInt(2,9)}+${randInt(1,7)})%97 end return x end`);
+  for (let i = 0; i < 34; i++) {
+    L.push(`${noiseT}[${randInt(10,999)}]=function(x) local z=${randInt(1,90)} for _=1,${randInt(2,6)} do z=(z*${randInt(2,11)}+${randInt(1,9)})%97 end return x end`);
   }
   for (let i = 0; i < 16; i++) {
     L.push(`${noiseK}[${i+1}]=${deepKeyExpr(randInt(0,255))}`);
@@ -755,8 +759,15 @@ function emitRuntimeFromBytes(pack) {
     const expr = (a * b + c === op) ? `(${a}*${b}+${c})` : String(op);
     L.push(`${N.H}[${expr}]=${handlers[op]}`);
   }
-  for (let i = 0; i < 12; i++) {
-    L.push(`${N.H}[${60 + Math.floor(Math.random() * 40)}]=function() end`);
+  // decoy ISA ~150 slots (ids permuted each build — looks like large opcode space)
+  const decoyIds = [];
+  for (let di = 0; di < 150; di++) decoyIds.push(100 + di);
+  for (let i = decoyIds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = decoyIds[i]; decoyIds[i] = decoyIds[j]; decoyIds[j] = tmp;
+  }
+  for (const id of decoyIds) {
+    L.push(`${N.H}[${id}]=function() end`);
   }
 
   L.push(`${N.run}=function(ch,uv,env,...)`);;
