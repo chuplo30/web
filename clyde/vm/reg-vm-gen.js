@@ -3036,6 +3036,37 @@ function serializeBytecodeAsBinary(chunk, ctx) {
     serializeChunk(chunk);
     return new Uint8Array(parts);
 }
+
+/** WAN: apply fusion + CFF on register chunk (no loadstring, no blob) */
+export function enhanceChunkMax(chunk, options = {}) {
+    const seed = options.polymorphicSeed || (Date.now() % 2147483647);
+    seedRandom(seed);
+    const allFusionOps = [45,46,47,48,49,50,51,52,53,54,55,56];
+    for (let si = allFusionOps.length - 1; si > 0; si--) {
+        const sj = Math.floor(rng() * (si + 1));
+        [allFusionOps[si], allFusionOps[sj]] = [allFusionOps[sj], allFusionOps[si]];
+    }
+    const nEnabled = 7 + Math.floor(rng() * 4);
+    const enabledSet = new Set(allFusionOps.slice(0, nEnabled));
+    const fusionRate = 0.6 + rng() * 0.25;
+    try {
+        const fusionCount = applyFusionPass(chunk, enabledSet, fusionRate);
+        if (fusionCount > 0) console.log(`[RegVM] WAN fuse: ${fusionCount} sequences (${nEnabled}/12)`);
+    } catch (e) {
+        console.log('[RegVM] WAN fuse skip:', e && e.message);
+    }
+    // CFF optional: can break generic-for jump targets on some chunks; enable via options.cff
+    if (options && options.cff) {
+        try {
+            const cffBlocks = flattenControlFlow(chunk);
+            if (cffBlocks > 0) console.log(`[RegVM] WAN CFF: ${cffBlocks} blocks`);
+        } catch (e) {
+            console.log('[RegVM] WAN CFF skip:', e && e.message);
+        }
+    }
+    return chunk;
+}
+
 export function generateRegVM(chunk, options = {}) {
     const level = options.level ?? "normal";
     const seed = options.polymorphicSeed || generateDynamicSeed(chunk);

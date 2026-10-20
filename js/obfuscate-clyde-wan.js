@@ -7,9 +7,10 @@
  *     → Clyde renameLocals + scrambleControlFlow + regCompile
  *     → serialize binary (magic random, opMap, varint, checksum)
  *     → WAN pack DATA: xor20→hex→xor20→base94 + keys/vmap giả
- *     → Runtime: SM decoder + anti-hook(debug.info) + checksum + parser + VM table
- *     → setmetatable surface (AT layer1 tách + decoy + 50KB junk)
- *   NO loadstring. AT exact user anti-envcrack.
+ *     → enhanceChunkMax (fuse + CFF) on bytecode
+ *     → Runtime: SM decoder + anti-hook + checksum + parser + VM (~57 op + fused)
+ *     → setmetatable surface (AT layer1 + decoy + 50KB junk)
+ *   NO loadstring. Pack/decoder/surface giữ như cũ — chỉ VM đủ opcode.
  */
 import { compileClydeChunk, clydeAvailable, validateLuau } from './clyde-backend.js';
 
@@ -719,6 +720,25 @@ function emitRuntimeFromBytes(pack) {
     30: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hR}[${hA}+1]-${hR}[${hA}+3] ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} end`,
     31: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local step=${hR}[${hA}+3] local idx=${hR}[${hA}+1]+step ${hR}[${hA}+1]=idx local lim=${hR}[${hA}+2] if step>0 then if idx<=lim then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} ${hR}[${hA}+4]=idx end else if idx>=lim then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} ${hR}[${hA}+4]=idx end end end`,
     32: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local f=${hR}[${hA}+1] local s=${hR}[${hA}+2] local v=${hR}[${hA}+3] if type(f)~="function" then return end local r={f(s,v)} local n=${hC} if n<1 then n=1 end for _i=1,n do ${hR}[${hA}+3+_i]=r[_i] end if r[1]~=nil then ${hR}[${hA}+3]=r[1] ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
+    0: `function(${hR},${hK},${hA},${hB},${hC},${hS}) end`,
+    33: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local t=${hR}[${hA}+1] if t==nil then return end local n=${hB} if n==0 then n=math.max(0,${hS}["${F.top}"]-${hA}-1) end local base=${hC} if base==0 then base=#t end for i=1,n do t[base+i]=${hR}[${hA}+1+i] end end`,
+    35: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local n=${hB} if n==0 then local top=${hS}["${F.top}"] or 0 for i=${hA}+1,top do ${hR}[i]=nil end elseif n==1 then ${hR}[${hA}+1]=nil else for i=0,n-2 do ${hR}[${hA}+1+i]=nil end end end`,
+    40: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end if narg<0 then narg=0 end local fn=${hR}[${hA}+1] local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end local ok,r1,r2,r3=pcall(function() return fn(${N.un}(args,1,narg)) end) ${hR}[${hA}+1]=ok ${hR}[${hA}+2]=r1 ${hR}[${hA}+3]=r2 end`,
+    41: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end local fn=${hR}[${hA}+1] local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end local ok,r1=pcall(function() return fn(${N.un}(args,1,narg)) end) ${hR}[${hA}+1]=ok ${hR}[${hA}+2]=r1 end`,
+    43: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local cd=${hS}["${F.code}"] or {} local nip=${hS}["${F.ip}"]+1 local base=nip*4 local ki=cd[base+2] or 0 ${hR}[${hA}+1]=${hK}[ki+1] ${hS}["${F.ip}"]=nip end`,
+    44: `function(${hR},${hK},${hA},${hB},${hC},${hS}) end`,
+    45: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (not ${hR}[${hA}+1])==(${hC}~=0) then else ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} end end`,
+    46: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (${N.RK}(${hR},${hK},${hB})==${N.RK}(${hR},${hK},${hC}))~=(${hA}~=0) then else ${hS}["${F.ip}"]=${hS}["${F.ip}"]+(${hS}["${F.code}"][(${hS}["${F.ip}"]+1)*4+3] or 0) ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
+    47: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (${N.RK}(${hR},${hK},${hB})<${N.RK}(${hR},${hK},${hC}))~=(${hA}~=0) then else ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} end end`,
+    48: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (${N.RK}(${hR},${hK},${hB})<=${N.RK}(${hR},${hK},${hC}))~=(${hA}~=0) then else ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} end end`,
+    49: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local v=${hR}[${hB}+1] ${hR}[${hA}+1]=v if (not v)==(${hC}~=0) then else ${hS}["${F.ip}"]=${hS}["${F.ip}"]+${hB} end end`,
+    50: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local n=${hK}[${hB}+1] ${hR}[${hA}+1]=${hS}["${F.env}"][n] end`,
+    51: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hK}[${hB}+1] ${hR}[${hA}+2]=${hK}[${hC}+1] end`,
+    52: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hR}[${hB}+1] ${hR}[${hA}+2]=${hR}[${hC}+1] end`,
+    53: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local obj=${hR}[${hB}+1] ${hR}[${hA}+2]=obj local k=${N.RK}(${hR},${hK},${hC}) if obj~=nil and k~=nil then local ok,v=pcall(function() return obj[k] end) ${hR}[${hA}+1]=ok and v or nil else ${hR}[${hA}+1]=nil end local cd=${hS}["${F.code}"] or {} local nip=${hS}["${F.ip}"]+1 local base=nip*4 local A2=cd[base+2] or ${hA} local B2=cd[base+3] or 1 local C2=cd[base+4] or 1 local narg=B2 if narg==0 then narg=(${hS}["${F.top}"] or 0)-A2 else narg=narg-1 end if narg<0 then narg=0 end local fn=${hR}[A2+1] local args={} for i=1,narg do args[i]=${hR}[A2+1+i] end if type(fn)=="function" then local res={fn(${N.un}(args,1,narg))} if C2==0 then for i=1,#res do ${hR}[A2+i]=res[i] end ${hS}["${F.top}"]=A2+#res elseif C2>1 then for i=1,C2-1 do ${hR}[A2+i]=res[i] end end end ${hS}["${F.ip}"]=nip end`,
+    54: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local n=${hK}[${hB}+1] local g=${hS}["${F.env}"][n] ${hR}[${hA}+1]=g local cd=${hS}["${F.code}"] or {} local nip=${hS}["${F.ip}"]+1 local base=nip*4 local A2=cd[base+2] or ${hA} local B2=cd[base+3] or 1 local C2=cd[base+4] or 1 local narg=B2 if narg==0 then narg=(${hS}["${F.top}"] or 0)-A2 else narg=narg-1 end if narg<0 then narg=0 end local fn=${hR}[A2+1] local args={} for i=1,narg do args[i]=${hR}[A2+1+i] end if type(fn)=="function" then local res={fn(${N.un}(args,1,narg))} if C2==0 then for i=1,#res do ${hR}[A2+i]=res[i] end elseif C2>1 then for i=1,C2-1 do ${hR}[A2+i]=res[i] end end end ${hS}["${F.ip}"]=nip end`,
+    55: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hK}[${hB}+1] return ${hR}[${hA}+1] end`,
+    56: `function(${hR},${hK},${hA},${hB},${hC},${hS}) ${hR}[${hA}+1]=${hR}[${hB}+1] return ${hR}[${hA}+1] end`,
   };
 
   L.push(`local ${N.run}`);
@@ -736,11 +756,11 @@ function emitRuntimeFromBytes(pack) {
     L.push(`${N.H}[${expr}]=${handlers[op]}`);
   }
   for (let i = 0; i < 12; i++) {
-    L.push(`${N.H}[${50 + Math.floor(Math.random() * 40)}]=function() end`);
+    L.push(`${N.H}[${60 + Math.floor(Math.random() * 40)}]=function() end`);
   }
 
   L.push(`${N.run}=function(ch,uv,env,...)`);;
-  L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
+  L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv,["${F.code}"]=${Lcd}} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
   L.push(`while true do local ${Lbs}=${hS}["${F.ip}"]*4 local ${Lz}=${Lcd}[${Lbs}+1] if ${Lz}==nil then break end local ${hA}=${Lcd}[${Lbs}+2] or 0 local ${hB}=${Lcd}[${Lbs}+3] or 0 local ${hC}=${Lcd}[${Lbs}+4] or 0 local f=${N.H}[${Lz}] if f then local r=f(${hR},${hK},${hA},${hB},${hC},${hS}) if r~=nil or (${Lz}>27 and ${Lz}<30) then return r end end ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`);
 
   // Env: bind critical stdlib (error/print/pcall/...) so AT can actually abort; then getfenv fallback

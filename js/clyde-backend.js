@@ -8,7 +8,7 @@ import { obfuscate as clydeObfuscate } from '../clyde/obfuscator/Obfuscator.js';
 import { scrambleControlFlow } from '../clyde/obfuscator/ControlFlowScrambler.js';
 import { encodeStrings } from '../clyde/obfuscator/StringEncoder.js';
 import { regCompile } from '../clyde/vm/RegCompiler.js';
-import { generateRegVM } from '../clyde/vm/reg-vm-gen.js';
+import { generateRegVM, enhanceChunkMax } from '../clyde/vm/reg-vm-gen.js';
 
 export function clydeAvailable() {
   return typeof lex === 'function' && typeof generateRegVM === 'function';
@@ -76,8 +76,11 @@ export function compileClydeChunk(source, opts = {}) {
         ob = encodeStrings(ob, { enabled: true, key: ((opts.seed || Date.now()) & 0xff) || 0x5A });
       } catch (_) {}
     }
-    const chunk = regCompile(ob);
-    return { ok: true, chunk: serChunk(chunk), meta: { insts: serChunk(chunk).nInstructions, backend: 'clyde-cf-max' } };
+    let chunk = regCompile(ob);
+    try {
+      chunk = enhanceChunkMax(chunk, { polymorphicSeed: opts.seed || (Date.now() % 2147483647) }) || chunk;
+    } catch (_) {}
+    return { ok: true, chunk: serChunk(chunk), meta: { insts: serChunk(chunk).nInstructions, backend: 'clyde-cf-max-fuse-cff', fuse: true, cff: true } };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
