@@ -77,8 +77,18 @@ app.use(express.static(__dirname, {
   },
 }));
 
-app.get('*', (_req, res) => {
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ ok: false, error: 'not found' });
+  }
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// last-resort JSON error (never HTML for API)
+app.use((err, req, res, next) => {
+  console.error('[WAN] express error', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ ok: false, error: String(err && err.message ? err.message : err) });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

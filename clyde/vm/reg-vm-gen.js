@@ -3051,7 +3051,7 @@ export function enhanceChunkMax(chunk, options = {}) {
     const fusionRate = 0.6 + rng() * 0.25;
     try {
         const fusionCount = applyFusionPass(chunk, enabledSet, fusionRate);
-        if (fusionCount > 0) console.log(`[RegVM] WAN fuse: ${fusionCount} sequences (${nEnabled}/12)`);
+        if (fusionCount > 0 && process.env.WAN_DEBUG) console.log(`[RegVM] WAN fuse: ${fusionCount} sequences (${nEnabled}/12)`);
     } catch (e) {
         console.log('[RegVM] WAN fuse skip:', e && e.message);
     }
@@ -3059,7 +3059,7 @@ export function enhanceChunkMax(chunk, options = {}) {
     if (options && options.cff) {
         try {
             const cffBlocks = flattenControlFlow(chunk);
-            if (cffBlocks > 0) console.log(`[RegVM] WAN CFF: ${cffBlocks} blocks`);
+            if (cffBlocks > 0 && process.env.WAN_DEBUG) console.log(`[RegVM] WAN CFF: ${cffBlocks} blocks`);
         } catch (e) {
             console.log('[RegVM] WAN CFF skip:', e && e.message);
         }

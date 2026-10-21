@@ -57,15 +57,19 @@ def obfuscate():
         opts["noCatph"] = True
 
         runner = r"""
-import { obfuscate } from './js/obfuscate.js';
+const _log = console.log, _warn = console.warn, _info = console.info;
+console.log = console.warn = console.info = () => {};
 const input = process.argv[2];
 const opts = JSON.parse(process.argv[3] || '{}');
 try {
+  const { obfuscate } = await import('./js/obfuscate.js');
   const r = obfuscate(input, opts);
   process.stdout.write(JSON.stringify({ ok: true, code: r.code, meta: r.meta || {} }));
 } catch (e) {
   process.stdout.write(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) }));
   process.exitCode = 1;
+} finally {
+  console.log = _log; console.warn = _warn; console.info = _info;
 }
 """
         proc = subprocess.run(
@@ -76,13 +80,37 @@ try {
             timeout=120,
         )
         out = (proc.stdout or "").strip()
+        err_s = (proc.stderr or "").strip()
         if not out:
-            err = (proc.stderr or "").strip() or "empty node output"
-            return jsonify(ok=False, error=err), 500
+            return jsonify(ok=False, error=err_s or "empty node output"), 500
+        # Node may print [RegVM] logs before JSON — take last JSON object
+        data = None
         try:
             data = json.loads(out)
         except json.JSONDecodeError:
-            return jsonify(ok=False, error="bad node json", raw=out[:500]), 500
+            for line in reversed(out.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        data = json.loads(line)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            if data is None:
+                # scan for first { ... last }
+                i = out.find("{")
+                j = out.rfind("}")
+                if i >= 0 and j > i:
+                    try:
+                        data = json.loads(out[i : j + 1])
+                    except json.JSONDecodeError:
+                        data = None
+        if data is None:
+            return jsonify(
+                ok=False,
+                error="bad node json",
+                raw=(out[:300] + (" | " + err_s[:200] if err_s else "")),
+            ), 500
         if not data.get("ok"):
             return jsonify(data), 500
         return jsonify(data)
