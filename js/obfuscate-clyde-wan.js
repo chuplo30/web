@@ -711,7 +711,7 @@ function emitRuntimeFromBytes(pack) {
     24: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (${N.RK}(${hR},${hK},${hB})<=${N.RK}(${hR},${hK},${hC}))~=(${hA}~=0) then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
     25: `function(${hR},${hK},${hA},${hB},${hC},${hS}) if (not ${hR}[${hA}+1])==(${hC}~=0) then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
     26: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local v=${hR}[${hB}+1] ${hR}[${hA}+1]=v if (not v)==(${hC}~=0) then ${hS}["${F.ip}"]=${hS}["${F.ip}"]+1 end end`,
-    27: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end if narg<0 then narg=0 end local nret=${hC} local fn=${hR}[${hA}+1] if type(fn)~="function" then error("wan:call",0) end local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end local res={fn(${N.un}(args,1,narg))} if nret==0 then for i=1,#res do ${hR}[${hA}+i]=res[i] end ${hS}["${F.top}"]=${hA}+#res elseif nret==1 then else for i=1,nret-1 do ${hR}[${hA}+i]=res[i] end end end`,
+    27: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=(${hS}["${F.top}"] or 0)-${hA} else narg=narg-1 end if narg<0 then narg=0 end local nret=${hC} local fn=${hR}[${hA}+1] if type(fn)~="function" then if nret==0 then ${hR}[${hA}+1]=nil elseif nret>1 then for i=1,nret-1 do ${hR}[${hA}+i]=nil end end return end local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end local un=${N.un} or table.unpack or unpack local res if narg<=0 then res={fn()} elseif narg==1 then res={fn(args[1])} elseif narg==2 then res={fn(args[1],args[2])} elseif narg==3 then res={fn(args[1],args[2],args[3])} else res={fn(un(args,1,narg))} end if nret==0 then for i=1,#res do ${hR}[${hA}+i]=res[i] end ${hS}["${F.top}"]=${hA}+#res elseif nret==1 then else for i=1,nret-1 do ${hR}[${hA}+i]=res[i] end end end`,
     28: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local narg=${hB} if narg==0 then narg=${hS}["${F.top}"]-${hA} else narg=narg-1 end local fn=${hR}[${hA}+1] local args={} for i=1,narg do args[i]=${hR}[${hA}+1+i] end if type(fn)~="function" then error("wan",0) end if narg>0 then return fn(${N.un}(args,1,narg)) else return fn() end end`,
     29: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local nval=${hB} if nval==0 then nval=math.max(0,${hS}["${F.top}"]-${hA}+1) elseif nval>=1 then nval=nval-1 end if nval<=0 then return end return ${N.un}(${hR},${hA}+1,${hA}+nval) end`,
     33: `function(${hR},${hK},${hA},${hB},${hC},${hS}) local t=${hR}[${hA}+1] if t==nil then return end local n=${hB} if n==0 then n=${hS}["${F.top}"]-${hA}-1 end local base=${hC} if base==0 then base=#t end for i=1,n do t[base+i]=${hR}[${hA}+1+i] end end`,
@@ -753,22 +753,18 @@ function emitRuntimeFromBytes(pack) {
     const tmp = opKeys[i]; opKeys[i] = opKeys[j]; opKeys[j] = tmp;
   }
   for (const op of opKeys) {
+    // always numeric key (stable) + optional opaque alias same value
     const a = 2 + Math.floor(Math.random() * 9);
     const c = Math.floor(Math.random() * a);
     const b = Math.floor((op - c) / a);
-    const expr = (a * b + c === op) ? `(${a}*${b}+${c})` : String(op);
-    L.push(`${N.H}[${expr}]=${handlers[op]}`);
+    if (a * b + c === op) {
+      L.push(`${N.H}[(${a}*${b}+${c})]=${handlers[op]}`);
+    } else {
+      L.push(`${N.H}[${op}]=${handlers[op]}`);
+    }
   }
-  // decoy ISA ~150 slots (ids permuted each build — looks like large opcode space)
-  const decoyIds = [];
-  for (let di = 0; di < 150; di++) decoyIds.push(100 + di);
-  for (let i = decoyIds.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = decoyIds[i]; decoyIds[i] = decoyIds[j]; decoyIds[j] = tmp;
-  }
-  for (const id of decoyIds) {
-    L.push(`${N.H}[${id}]=function() end`);
-  }
+  // decoy ISA: ONE loop (no 150 separate lines in output)
+  L.push(`do local _d=function() end for _i=100,249 do ${N.H}[_i]=_d end end`);
 
   L.push(`${N.run}=function(ch,uv,env,...)`);;
   L.push(`local ${hR}={} local ${hK}=ch["${F.K}"] local ${Lcd}=ch["${F.code}"] local ${Lpr}=ch["${F.P}"] or {} local ${hS}={["${F.ip}"]=0,["${F.top}"]=0,["${F.env}"]=env,["${F.P}"]=${Lpr},["${F.uv}"]=uv,["${F.code}"]=${Lcd}} local vararg={...} local nparams=ch["${F.nParams}"] or 0 for i=1,nparams do ${hR}[i]=vararg[i] end if ch["${F.isVA}"] and ch["${F.isVA}"]~=0 then for i=nparams+1,#vararg do ${hR}[i]=vararg[i] end end`);
