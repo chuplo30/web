@@ -1,42 +1,47 @@
-# 8xms Obfuscate + Custom Register VM
+# WXZ Dump
 
-## Pipeline
+Web UI glass + video nền · **string dump** với **thick fake env** (hook VM).
+
+**Không cần lupro.** Chỉ cần [Lune](https://lune-org.github.io/docs).
+
+## Tính năng dump
+
+- Hook `loadstring` / `HttpGet` / `print` / `warn`
+- Full `string.*` · `buffer` · `bit32` · `utf8` · base64/crypt
+- Soft `Instance` / `game:GetService` / Signal
+- Virtual clock + `task.wait` (chạy VM không kẹt)
+- Static + runtime harvest constants
+
+## Chạy web
+
+```bash
+cd wxz-dump
+pip install fastapi uvicorn python-multipart
+
+# Cần binary lune:
+#   mac/linux: https://github.com/lune-org/lune/releases
+export LUNE_BIN=/path/to/lune   # hoặc để lune trên PATH
+
+PORT=8765 python3 server.py
+```
+
+Mở http://127.0.0.1:8765
+
+## CLI (không web)
+
+```bash
+cd tools
+lune run string_dump.luau ../path/to/obf.lua out.txt
+```
+
+## Cấu trúc
 
 ```
-Luau
-  → compileToVM (~130 opcodes, random physical map per build)
-  → emit Lua interpreter + bytecode (opcode table XOR-masked at runtime)
-  → transformComplex (nested state machine shell)
-  → multi-fragment × triple multiLayerEncode (XOR/hex/Base94)
-  → junk 140–180KB + Anti-Tamper
-  → loadstring
+wxz-dump/
+  index.html
+  server.py
+  static/bg.mp4
+  tools/
+    string_dump.luau      # engine chính
+    RobloxFidelity.luau   # thick number/env helpers
 ```
-
-## VM modes
-
-- **vm**: simple straight-line scripts compiled to real bytecode
-- **execstr**: full script as VM constant + `EXECSTR` handler (any valid Luau still runs)
-
-## Files
-
-| Path | Role |
-|------|------|
-| `js/vm-isa.js` | 130 opcode ISA + packInst |
-| `js/vm-compiler.js` | source → bytecode |
-| `js/vm-runtime.js` | bytecode → Lua interpreter source |
-| `js/transform.js` | state-machine shell |
-| `js/obfuscate.js` | full pipeline |
-| `netlify/functions/obfuscate.mjs` | API |
-
-## Deploy
-
-Netlify publish `.` — see `docs.html` for API.
-
-
-## VM module
-
-- `vm-isa.js` — 130 logical opcodes + random physical map
-- `vm-compiler.js` — subset bytecode / EXECSTR fallback
-- `vm-runtime.js` — handler-table interpreter emitter
-
-Obfuscate pipeline always runs VM emission before State Machine + pack.
